@@ -1,0 +1,70 @@
+{
+  "organization": {
+    "name": "Banadir Property Management",
+    "taxNumber": "SO-TAX-001234",
+    "registrationNumber": "SO-REG-2026-0001",
+    "address": {
+      "street": "Maka Al-Mukarama Road",
+      "district": "Hodan",
+      "city": "Mogadishu",
+      "region": "Banadir",
+      "country": "Somalia"
+    },
+    "contact": {
+      "primaryEmail": "info@banadirproperty.so",
+      "primaryPhone": "+252615551234"
+    },
+    "settings": {
+      "baseCurrency": "USD",
+      "allowedCurrencies": ["USD"],
+      "vatRate": 0,
+      "lateFeeType": "percentage",
+      "lateFeeValue": 5,
+      "gracePeriodDays": 5,
+      "invoiceDueDays": 5,
+      "rentDueDay": 1
+    }
+  },
+  "manualPaymentExamples": [
+    {
+      "method": "evc",
+      "methodDetails": {
+        "evc": {
+          "referenceNumber": "EVC-20260216-7781",
+          "senderMsisdn": "+252619991122",
+          "receiverMsisdn": "+252615551234",
+          "confirmationMessage": "Payment confirmed"
+        }
+      },
+      "amount": 850,
+      "currency": "USD"
+    },
+    {
+      "method": "merchant",
+      "methodDetails": {
+        "merchant": {
+          "referenceNumber": "MER-239991",
+          "merchantName": "Waafi Merchant",
+          "merchantCode": "WM-1002",
+          "terminalId": "TERM-9"
+        }
+      },
+      "amount": 500,
+      "currency": "USD"
+    },
+    {
+      "method": "bank",
+      "methodDetails": {
+        "bank": {
+          "bankName": "Salaam Bank",
+          "accountNumber": "0012456678",
+          "transactionId": "BNK-883721",
+          "transferDate": "2026-02-16T10:00:00.000Z",
+          "slipNumber": "SLIP-291"
+        }
+      },
+      "amount": 1200,
+      "currency": "USD"
+    }
+  ]
+}
