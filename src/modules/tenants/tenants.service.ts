@@ -35,7 +35,7 @@ export class TenantsService {
     @InjectModel(Payment.name)
     private readonly paymentModel: Model<PaymentDocument>,
     private readonly fileUploadService: FileUploadService,
-  ) {}
+  ) { }
 
   async create(organizationId: string, dto: CreateTenantDto): Promise<TenantDocument> {
     const building = await this.buildingModel.findOne({
@@ -54,7 +54,7 @@ export class TenantsService {
     );
 
     await this.ensureUniqueness(organizationId, dto);
-    this.assertVerificationConsistency(dto);
+    // this.assertVerificationConsistency(dto);
 
     const exists = await this.tenantModel.findOne({
       organizationId: new Types.ObjectId(organizationId),
@@ -158,7 +158,7 @@ export class TenantsService {
     dto: UpdateTenantDto,
   ): Promise<TenantDocument> {
     await this.ensureUniqueness(organizationId, dto, id);
-    this.assertVerificationConsistency(dto);
+    // this.assertVerificationConsistency(dto);
 
     const payload: Record<string, unknown> = { ...dto };
     if (dto.buildingId) {
@@ -355,11 +355,11 @@ export class TenantsService {
     }
   }
 
-  private assertVerificationConsistency(dto: Partial<CreateTenantDto>): void {
-    if (dto.isVerified && !dto.verifiedBy) {
-      throw new ConflictException('verifiedBy is required when isVerified is true.');
-    }
-  }
+  // private assertVerificationConsistency(dto: Partial<CreateTenantDto>): void {
+  //   if (dto.isVerified && !dto.verifiedBy) {
+  //     throw new ConflictException('verifiedBy is required when isVerified is true.');
+  //   }
+  // }
 
   private async generateNextTenantCode(
     organizationId: Types.ObjectId,

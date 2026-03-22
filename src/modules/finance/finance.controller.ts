@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { PaginationDto } from '@/common/dto/pagination.dto';
 import { ParseObjectIdPipe } from '@/common/pipes/parse-object-id.pipe';
+import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { FinanceReportDto } from './dto/finance-report.dto';
@@ -27,6 +28,11 @@ export class FinanceController {
   @Post('invoices/generate')
   generateInvoices(@Req() req: any, @Body() dto: GenerateInvoicesDto) {
     return this.financeService.generateMonthlyInvoices(req.user.organizationId, dto);
+  }
+
+  @Post('invoices')
+  createInvoice(@Req() req: any, @Body() dto: CreateInvoiceDto) {
+    return this.financeService.createSingleInvoice(req.user.organizationId, dto);
   }
 
   @Get('invoices')
@@ -146,6 +152,7 @@ export class FinanceController {
     query: PaginationDto & {
       leaseId?: string;
       utilityType?: string;
+      utilityTypeId?: string;
       month?: number;
       year?: number;
       isBilled?: boolean;

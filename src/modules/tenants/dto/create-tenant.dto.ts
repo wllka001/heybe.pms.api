@@ -25,6 +25,10 @@ class EmergencyContactDto {
   phone?: string;
 }
 
+export enum Gender {
+  male = 'male',
+  female = 'female',
+}
 class PersonalInfoDto {
   @IsString()
   firstName: string;
@@ -37,13 +41,14 @@ class PersonalInfoDto {
   lastName: string;
 
   @IsOptional()
-  @IsEnum(['male', 'female'])
-  gender?: 'male' | 'female';
+  @IsEnum(Gender)
+  gender?: Gender;
 
   @IsOptional()
   @IsDateString()
-  dateOfBirth?: Date;
+  dateOfBirth?: string;
 
+  @IsOptional()
   @IsString()
   idNumber?: string;
 
@@ -51,7 +56,6 @@ class PersonalInfoDto {
   @IsString()
   nationality?: string;
 }
-
 class ContactInfoDto {
   @IsString()
   primaryPhone: string;

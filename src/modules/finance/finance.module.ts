@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Lease, LeaseSchema } from '@/modules/leases/schemas/lease.schema';
+import { UtilityUsage, UtilityUsageSchema } from '@/modules/utility-usage/schemas/utility-usage.schema';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { Expense, ExpenseSchema } from './schemas/expense.schema';
@@ -19,6 +20,7 @@ import {
       { name: Payment.name, schema: PaymentSchema },
       { name: UtilityReading.name, schema: UtilityReadingSchema },
       { name: Expense.name, schema: ExpenseSchema },
+      { name: UtilityUsage.name, schema: UtilityUsageSchema },
     ]),
   ],
   controllers: [FinanceController],

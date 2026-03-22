@@ -49,10 +49,8 @@ export class Invoice {
       },
       utilities: [
         {
-          type: {
-            type: String,
-            enum: ['water', 'electricity', 'gas', 'garbage', 'security'],
-          },
+          type: String,
+          description: String,
           consumption: Number,
           rate: Number,
           amount: Number,

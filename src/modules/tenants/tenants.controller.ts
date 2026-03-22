@@ -22,7 +22,7 @@ import { TenantsService } from './tenants.service';
 
 @Controller('tenants')
 export class TenantsController {
-  constructor(private readonly tenantsService: TenantsService) {}
+  constructor(private readonly tenantsService: TenantsService) { }
 
   @Post()
   create(@Req() req: any, @Body() dto: CreateTenantDto) {

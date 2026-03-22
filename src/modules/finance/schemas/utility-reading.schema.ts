@@ -17,24 +17,30 @@ export class UtilityReading {
   @Prop({ type: Types.ObjectId, ref: 'Lease', required: true })
   leaseId: Types.ObjectId;
 
-  @Prop({ type: String, enum: ['water', 'electricity', 'gas'], required: true })
-  utilityType: 'water' | 'electricity' | 'gas';
+  @Prop({ type: Types.ObjectId, ref: 'UtilityUsage', required: true })
+  utilityTypeId: Types.ObjectId;
+
+  @Prop({ type: String, required: true })
+  utilityType: string;
+
+  @Prop({ type: String, required: true })
+  utilityTypeName: string;
 
   @Prop({
     type: {
       previous: {
-        value: { type: Number, required: true },
-        date: { type: Date, required: true },
+        value: { type: Number },
+        date: { type: Date },
       },
       current: {
-        value: { type: Number, required: true },
-        date: { type: Date, required: true },
+        value: { type: Number },
+        date: { type: Date },
         readingBy: { type: Types.ObjectId, ref: 'User' },
         imageUrl: String,
         notes: String,
       },
     },
-    required: true,
+    default: {},
   })
   readings: Record<string, unknown>;
 
@@ -43,6 +49,9 @@ export class UtilityReading {
 
   @Prop({ required: true })
   ratePerUnit: number;
+
+  @Prop({ type: Number, default: 0 })
+  fixedAmount: number;
 
   @Prop({ required: true })
   amount: number;
@@ -87,3 +96,13 @@ export class UtilityReading {
 }
 
 export const UtilityReadingSchema = SchemaFactory.createForClass(UtilityReading);
+UtilityReadingSchema.index(
+  {
+    organizationId: 1,
+    unitId: 1,
+    utilityTypeId: 1,
+    'billingPeriod.year': 1,
+    'billingPeriod.month': 1,
+  },
+  { unique: true, partialFilterExpression: { deletedAt: null } },
+);

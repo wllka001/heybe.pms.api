@@ -1,6 +1,5 @@
 import {
   IsDateString,
-  IsEnum,
   IsMongoId,
   IsNumber,
   IsOptional,
@@ -19,23 +18,33 @@ export class RecordReadingDto {
   @IsMongoId()
   leaseId: string;
 
-  @IsEnum(['water', 'electricity', 'gas'])
-  utilityType: 'water' | 'electricity' | 'gas';
+  @IsMongoId()
+  utilityTypeId: string;
 
+  @IsOptional()
   @IsNumber()
-  previousValue: number;
+  previousValue?: number;
 
+  @IsOptional()
   @IsDateString()
-  previousDate: string;
+  previousDate?: string;
 
+  @IsOptional()
   @IsNumber()
-  currentValue: number;
+  currentValue?: number;
 
+  @IsOptional()
   @IsDateString()
-  currentDate: string;
+  currentDate?: string;
 
+  @IsOptional()
   @IsNumber()
-  ratePerUnit: number;
+  ratePerUnit?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  fixedAmount?: number;
 
   @IsOptional()
   @IsNumber()

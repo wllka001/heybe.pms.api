@@ -5,7 +5,7 @@ import { SearchUtilityUsageDto } from './dto/search-utility-usage.dto';
 import { UpdateUtilityUsageDto } from './dto/update-utility-usage.dto';
 import { UtilityUsageService } from './utility-usage.service';
 
-@Controller('utility-usages')
+@Controller('utility-types')
 export class UtilityUsageController {
   constructor(private readonly utilityUsageService: UtilityUsageService) {}
 
@@ -38,4 +38,3 @@ export class UtilityUsageController {
     return this.utilityUsageService.remove(req.user.organizationId, id);
   }
 }
-

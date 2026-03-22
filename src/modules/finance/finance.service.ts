@@ -11,7 +11,9 @@ import { addDays, endOfMonth, startOfMonth } from '@/common/utils/date-utils';
 import { generateSequenceCode } from '@/common/utils/generate-code.utils';
 import { roundCurrency } from '@/common/utils/number-utils';
 import { Lease, LeaseDocument } from '@/modules/leases/schemas/lease.schema';
+import { UtilityUsage, UtilityUsageDocument } from '@/modules/utility-usage/schemas/utility-usage.schema';
 import { NotificationsService } from '@/shared/notifications/notifications.service';
+import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { FinanceReportDto } from './dto/finance-report.dto';
@@ -39,6 +41,8 @@ export class FinanceService {
     @InjectModel(Payment.name) private readonly paymentModel: Model<PaymentDocument>,
     @InjectModel(UtilityReading.name)
     private readonly utilityReadingModel: Model<UtilityReadingDocument>,
+    @InjectModel(UtilityUsage.name)
+    private readonly utilityTypeModel: Model<UtilityUsageDocument>,
     @InjectModel(Expense.name) private readonly expenseModel: Model<ExpenseDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly notificationsService: NotificationsService,
@@ -109,22 +113,57 @@ export class FinanceService {
 
       const lateFeeTax = 0;
       const lateFeeTotal = lateFeeAmount + lateFeeTax;
+      const garbageFee = Number(lease.utilities?.garbageFee ?? 0);
+      const securityFee = Number(lease.utilities?.securityFee ?? 0);
+
+      const fixedUtilityRows = [
+        ...(garbageFee > 0
+          ? [
+              {
+                type: 'garbage',
+                consumption: 1,
+                rate: garbageFee,
+                amount: garbageFee,
+                tax: 0,
+                total: garbageFee,
+                paidAmount: 0,
+              },
+            ]
+          : []),
+        ...(securityFee > 0
+          ? [
+              {
+                type: 'security',
+                consumption: 1,
+                rate: securityFee,
+                amount: securityFee,
+                tax: 0,
+                total: securityFee,
+                paidAmount: 0,
+              },
+            ]
+          : []),
+      ];
 
       const items = {
         rent: {
           amount: lease.terms.rentAmount,
           paidAmount: 0,
         },
-        utilities: utilityReadings.map((reading: UtilityReadingDocument) => ({
-          type: reading.utilityType,
-          consumption: reading.consumption,
-          rate: reading.ratePerUnit,
-          amount: reading.amount,
-          tax: reading.taxAmount,
-          total: reading.totalAmount,
-          readingId: reading._id,
-          paidAmount: 0,
-        })),
+        utilities: [
+          ...utilityReadings.map((reading: UtilityReadingDocument) => ({
+            type: reading.utilityType,
+            consumption: reading.consumption,
+            rate: reading.ratePerUnit,
+            amount: reading.amount,
+            tax: reading.taxAmount,
+            total: reading.totalAmount,
+            description: reading.utilityTypeName,
+            readingId: reading._id,
+            paidAmount: 0,
+          })),
+          ...fixedUtilityRows,
+        ],
         additionalCharges: lateFeeAmount
           ? [
               {
@@ -189,6 +228,100 @@ export class FinanceService {
     }
 
     return { created, skipped };
+  }
+
+  async createSingleInvoice(
+    organizationId: string,
+    dto: CreateInvoiceDto,
+  ): Promise<InvoiceDocument> {
+    const orgObjectId = new Types.ObjectId(organizationId);
+    const lease = await this.leaseModel.findOne({
+      _id: new Types.ObjectId(dto.leaseId),
+      organizationId: orgObjectId,
+      deletedAt: null,
+    });
+
+    if (!lease) {
+      throw new NotFoundException('Lease not found.');
+    }
+
+    const duplicate = await this.invoiceModel.findOne({
+      organizationId: orgObjectId,
+      leaseId: lease._id,
+      'period.month': dto.month,
+      'period.year': dto.year,
+      deletedAt: null,
+    });
+
+    if (duplicate) {
+      throw new ConflictException('Invoice already exists for this lease and period.');
+    }
+
+    const monthStart = startOfMonth(dto.year, dto.month);
+    const monthEnd = endOfMonth(dto.year, dto.month);
+
+    const utilityRows = (dto.utilities ?? []).map((utility) => {
+      const amount = roundCurrency(Number(utility.amount));
+      const tax = roundCurrency(Number(utility.tax ?? 0));
+      return {
+        type: utility.type,
+        consumption: Number(utility.consumption ?? 1),
+        rate: Number(utility.rate ?? amount),
+        amount,
+        tax,
+        total: roundCurrency(amount + tax),
+        paidAmount: 0,
+      };
+    });
+
+    const additionalRows = (dto.additionalCharges ?? []).map((charge) => {
+      const amount = roundCurrency(Number(charge.amount));
+      const tax = roundCurrency(Number(charge.tax ?? 0));
+      return {
+        description: charge.description,
+        amount,
+        tax,
+        total: roundCurrency(amount + tax),
+        type: 'other',
+        paidAmount: 0,
+      };
+    });
+
+    const items = {
+      rent: {
+        amount: roundCurrency(Number(dto.rentAmount ?? lease.terms.rentAmount)),
+        paidAmount: 0,
+      },
+      utilities: utilityRows,
+      additionalCharges: additionalRows,
+    };
+
+    const summary = calculateInvoiceSummary(items);
+
+    return this.invoiceModel.create({
+      organizationId: orgObjectId,
+      invoiceNumber: this.generateInvoiceNumber(dto.year, dto.month),
+      leaseId: lease._id,
+      tenantId: lease.tenantId,
+      unitId: lease.unitId,
+      buildingId: lease.buildingId,
+      period: {
+        month: dto.month,
+        year: dto.year,
+        startDate: monthStart,
+        endDate: monthEnd,
+        dueDate: new Date(dto.dueDate),
+      },
+      items,
+      summary,
+      status: 'pending',
+      paidAmount: 0,
+      balance: summary.totalAmount,
+      lateFee: {
+        applied: false,
+        feeAmount: 0,
+      },
+    });
   }
 
   async listInvoices(
@@ -607,13 +740,58 @@ export class FinanceService {
     dto: RecordReadingDto,
     userId: string,
   ): Promise<UtilityReadingDocument> {
-    if (dto.currentValue < dto.previousValue) {
+    const orgObjectId = new Types.ObjectId(organizationId);
+    const utilityType = await this.utilityTypeModel.findOne({
+      _id: new Types.ObjectId(dto.utilityTypeId),
+      organizationId: orgObjectId,
+      deletedAt: null,
+    });
+
+    if (!utilityType) {
+      throw new NotFoundException('Utility type not found.');
+    }
+
+    if (!utilityType.isActive) {
+      throw new BadRequestException('Selected utility type is inactive.');
+    }
+
+    const config = utilityType.inputConfig ?? {};
+    const defaults = utilityType.defaults ?? {};
+
+    if (config.hasPreviousValue && dto.previousValue === undefined) {
+      throw new BadRequestException('Previous value is required for this utility type.');
+    }
+    if (config.hasCurrentValue && dto.currentValue === undefined) {
+      throw new BadRequestException('Current value is required for this utility type.');
+    }
+    if (config.hasRatePerUnit && dto.ratePerUnit === undefined && defaults.ratePerUnit === undefined) {
+      throw new BadRequestException('Rate per unit is required for this utility type.');
+    }
+    if (config.hasPreviousDate && !dto.previousDate) {
+      throw new BadRequestException('Previous date is required for this utility type.');
+    }
+    if (config.hasCurrentDate && !dto.currentDate) {
+      throw new BadRequestException('Current date is required for this utility type.');
+    }
+
+    const previousValue = Number(dto.previousValue ?? 0);
+    const currentValue = Number(dto.currentValue ?? 0);
+    if (config.hasPreviousValue && config.hasCurrentValue && currentValue < previousValue) {
       throw new BadRequestException('Current value cannot be lower than previous value.');
     }
 
-    const consumption = roundCurrency(dto.currentValue - dto.previousValue);
-    const amount = roundCurrency(consumption * dto.ratePerUnit);
-    const taxRate = dto.taxRate ?? 0;
+    const consumption = config.hasPreviousValue && config.hasCurrentValue
+      ? roundCurrency(currentValue - previousValue)
+      : 0;
+
+    const ratePerUnit = Number(dto.ratePerUnit ?? defaults.ratePerUnit ?? 0);
+    const variableAmount = roundCurrency(consumption * ratePerUnit);
+    const fixedAmount = config.hasFixedMonthlyAmount
+      ? roundCurrency(Number(dto.fixedAmount ?? defaults.fixedMonthlyAmount ?? 0))
+      : 0;
+
+    const amount = roundCurrency(variableAmount + fixedAmount);
+    const taxRate = dto.taxRate ?? Number(defaults.taxRate ?? 0);
     const taxAmount = roundCurrency((amount * taxRate) / 100);
     const totalAmount = roundCurrency(amount + taxAmount);
 
@@ -624,9 +802,9 @@ export class FinanceService {
     };
 
     const exists = await this.utilityReadingModel.findOne({
-      organizationId: new Types.ObjectId(organizationId),
+      organizationId: orgObjectId,
       unitId: new Types.ObjectId(dto.unitId),
-      utilityType: dto.utilityType,
+      utilityTypeId: utilityType._id,
       'billingPeriod.month': dto.billingMonth,
       'billingPeriod.year': dto.billingYear,
       deletedAt: null,
@@ -637,26 +815,29 @@ export class FinanceService {
     }
 
     return this.utilityReadingModel.create({
-      organizationId: new Types.ObjectId(organizationId),
+      organizationId: orgObjectId,
       buildingId: new Types.ObjectId(dto.buildingId),
       unitId: new Types.ObjectId(dto.unitId),
       leaseId: new Types.ObjectId(dto.leaseId),
-      utilityType: dto.utilityType,
+      utilityTypeId: utilityType._id,
+      utilityType: utilityType.code,
+      utilityTypeName: utilityType.name,
       readings: {
         previous: {
           value: dto.previousValue,
-          date: new Date(dto.previousDate),
+          date: dto.previousDate ? new Date(dto.previousDate) : undefined,
         },
         current: {
           value: dto.currentValue,
-          date: new Date(dto.currentDate),
+          date: dto.currentDate ? new Date(dto.currentDate) : undefined,
           readingBy: new Types.ObjectId(userId),
           imageUrl: dto.imageUrl,
           notes: dto.notes,
         },
       },
       consumption,
-      ratePerUnit: dto.ratePerUnit,
+      ratePerUnit,
+      fixedAmount,
       amount,
       taxRate,
       taxAmount,
@@ -684,6 +865,7 @@ export class FinanceService {
     query: PaginationDto & {
       leaseId?: string;
       utilityType?: string;
+      utilityTypeId?: string;
       month?: number;
       year?: number;
       isBilled?: boolean;
@@ -703,6 +885,10 @@ export class FinanceService {
 
     if (query.utilityType) {
       filter.utilityType = query.utilityType;
+    }
+
+    if (query.utilityTypeId) {
+      filter.utilityTypeId = new Types.ObjectId(query.utilityTypeId);
     }
 
     if (query.month !== undefined) {

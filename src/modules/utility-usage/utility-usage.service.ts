@@ -5,7 +5,6 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Lease, LeaseDocument } from '@/modules/leases/schemas/lease.schema';
 import { CreateUtilityUsageDto } from './dto/create-utility-usage.dto';
 import { SearchUtilityUsageDto } from './dto/search-utility-usage.dto';
 import { UpdateUtilityUsageDto } from './dto/update-utility-usage.dto';
@@ -16,8 +15,6 @@ export class UtilityUsageService {
   constructor(
     @InjectModel(UtilityUsage.name)
     private readonly utilityUsageModel: Model<UtilityUsageDocument>,
-    @InjectModel(Lease.name)
-    private readonly leaseModel: Model<LeaseDocument>,
   ) {}
 
   async create(
@@ -25,25 +22,37 @@ export class UtilityUsageService {
     dto: CreateUtilityUsageDto,
     userId?: string,
   ): Promise<UtilityUsageDocument> {
-    await this.ensureLeaseExists(organizationId, dto.leaseId);
+    const normalizedCode = this.normalizeCode(dto.code || dto.name);
 
     const exists = await this.utilityUsageModel.findOne({
       organizationId: new Types.ObjectId(organizationId),
-      leaseId: new Types.ObjectId(dto.leaseId),
-      month: dto.month,
+      code: normalizedCode,
       deletedAt: null,
     });
     if (exists) {
-      throw new ConflictException('Utility usage already exists for this lease/month.');
+      throw new ConflictException('Utility type code already exists.');
     }
 
     return this.utilityUsageModel.create({
       organizationId: new Types.ObjectId(organizationId),
-      leaseId: new Types.ObjectId(dto.leaseId),
-      month: dto.month,
-      waterUsed: dto.waterUsed ?? 0,
-      electricityUsed: dto.electricityUsed ?? 0,
-      gasUsed: dto.gasUsed ?? 0,
+      name: dto.name.trim(),
+      code: normalizedCode,
+      description: dto.description?.trim() || undefined,
+      inputConfig: {
+        hasPreviousValue: Boolean(dto.inputConfig?.hasPreviousValue),
+        hasCurrentValue: Boolean(dto.inputConfig?.hasCurrentValue),
+        hasRatePerUnit: Boolean(dto.inputConfig?.hasRatePerUnit),
+        hasPreviousDate: Boolean(dto.inputConfig?.hasPreviousDate),
+        hasCurrentDate: Boolean(dto.inputConfig?.hasCurrentDate),
+        hasFixedMonthlyAmount: Boolean(dto.inputConfig?.hasFixedMonthlyAmount),
+      },
+      defaults: {
+        ratePerUnit: Number(dto.defaults?.ratePerUnit ?? 0),
+        fixedMonthlyAmount: Number(dto.defaults?.fixedMonthlyAmount ?? 0),
+        taxRate: Number(dto.defaults?.taxRate ?? 0),
+        unitLabel: dto.defaults?.unitLabel?.trim() || '',
+      },
+      isActive: dto.isActive ?? true,
       createdBy: userId ? new Types.ObjectId(userId) : undefined,
       deletedAt: null,
     });
@@ -57,18 +66,20 @@ export class UtilityUsageService {
       organizationId: new Types.ObjectId(organizationId),
       deletedAt: null,
     };
-    if (query.leaseId) {
-      filter.leaseId = new Types.ObjectId(query.leaseId);
+    if (query.isActive !== undefined) {
+      filter.isActive = query.isActive;
     }
-    if (query.month) {
-      filter.month = query.month;
+    if (query.q) {
+      filter.$or = [
+        { name: { $regex: query.q, $options: 'i' } },
+        { code: { $regex: query.q, $options: 'i' } },
+      ];
     }
 
     const [data, total] = await Promise.all([
       this.utilityUsageModel
         .find(filter)
-        .populate('leaseId', 'leaseNumber tenantId buildingId unitId status')
-        .sort({ month: -1, createdAt: -1 })
+        .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit),
       this.utilityUsageModel.countDocuments(filter),
@@ -88,15 +99,15 @@ export class UtilityUsageService {
   }
 
   async findOne(organizationId: string, id: string): Promise<UtilityUsageDocument> {
-    const usage = await this.utilityUsageModel.findOne({
+    const utilityType = await this.utilityUsageModel.findOne({
       _id: new Types.ObjectId(id),
       organizationId: new Types.ObjectId(organizationId),
       deletedAt: null,
     });
-    if (!usage) {
-      throw new NotFoundException('Utility usage not found.');
+    if (!utilityType) {
+      throw new NotFoundException('Utility type not found.');
     }
-    return usage;
+    return utilityType;
   }
 
   async update(
@@ -105,25 +116,28 @@ export class UtilityUsageService {
     dto: UpdateUtilityUsageDto,
   ): Promise<UtilityUsageDocument> {
     const current = await this.findOne(organizationId, id);
-    const leaseId = dto.leaseId ?? current.leaseId.toString();
-    const month = dto.month ?? current.month;
-
-    await this.ensureLeaseExists(organizationId, leaseId);
+    const nextCode = this.normalizeCode(dto.code || dto.name || current.code);
 
     const duplicate = await this.utilityUsageModel.findOne({
       _id: { $ne: current._id },
       organizationId: new Types.ObjectId(organizationId),
-      leaseId: new Types.ObjectId(leaseId),
-      month,
+      code: nextCode,
       deletedAt: null,
     });
     if (duplicate) {
-      throw new ConflictException('Utility usage already exists for this lease/month.');
+      throw new ConflictException('Utility type code already exists.');
     }
 
-    const payload: Record<string, unknown> = { ...dto };
-    if (dto.leaseId) {
-      payload.leaseId = new Types.ObjectId(dto.leaseId);
+    const payload: Record<string, unknown> = {
+      ...dto,
+      code: nextCode,
+    };
+
+    if (dto.name !== undefined) {
+      payload.name = dto.name.trim();
+    }
+    if (dto.description !== undefined) {
+      payload.description = dto.description?.trim() || undefined;
     }
 
     const updated = await this.utilityUsageModel.findOneAndUpdate(
@@ -137,7 +151,7 @@ export class UtilityUsageService {
     );
 
     if (!updated) {
-      throw new NotFoundException('Utility usage not found.');
+      throw new NotFoundException('Utility type not found.');
     }
     return updated;
   }
@@ -149,24 +163,20 @@ export class UtilityUsageService {
         organizationId: new Types.ObjectId(organizationId),
         deletedAt: null,
       },
-      { deletedAt: new Date() },
+      { deletedAt: new Date(), isActive: false },
       { new: true },
     );
     if (!deleted) {
-      throw new NotFoundException('Utility usage not found.');
+      throw new NotFoundException('Utility type not found.');
     }
     return deleted;
   }
 
-  private async ensureLeaseExists(organizationId: string, leaseId: string): Promise<void> {
-    const exists = await this.leaseModel.findOne({
-      _id: new Types.ObjectId(leaseId),
-      organizationId: new Types.ObjectId(organizationId),
-      deletedAt: null,
-    });
-    if (!exists) {
-      throw new NotFoundException('Lease not found for utility usage.');
-    }
+  private normalizeCode(code: string): string {
+    return code
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
   }
 }
-

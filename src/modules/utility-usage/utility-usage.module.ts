@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { Lease, LeaseSchema } from '@/modules/leases/schemas/lease.schema';
 import { UtilityUsageController } from './utility-usage.controller';
 import { UtilityUsageService } from './utility-usage.service';
 import { UtilityUsage, UtilityUsageSchema } from './schemas/utility-usage.schema';
@@ -9,7 +8,6 @@ import { UtilityUsage, UtilityUsageSchema } from './schemas/utility-usage.schema
   imports: [
     MongooseModule.forFeature([
       { name: UtilityUsage.name, schema: UtilityUsageSchema },
-      { name: Lease.name, schema: LeaseSchema },
     ]),
   ],
   controllers: [UtilityUsageController],
@@ -17,4 +15,3 @@ import { UtilityUsage, UtilityUsageSchema } from './schemas/utility-usage.schema
   exports: [UtilityUsageService, MongooseModule],
 })
 export class UtilityUsageModule {}
-

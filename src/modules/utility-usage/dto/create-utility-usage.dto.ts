@@ -1,26 +1,42 @@
-import { IsMongoId, IsNumber, IsOptional, IsString, Matches, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsObject,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateUtilityUsageDto {
-  @IsMongoId()
-  leaseId: string;
+  @IsString()
+  name: string;
 
   @IsString()
-  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/)
-  month: string;
+  code: string;
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  waterUsed?: number;
+  @IsString()
+  description?: string;
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  electricityUsed?: number;
+  @IsObject()
+  inputConfig?: {
+    hasPreviousValue?: boolean;
+    hasCurrentValue?: boolean;
+    hasRatePerUnit?: boolean;
+    hasPreviousDate?: boolean;
+    hasCurrentDate?: boolean;
+    hasFixedMonthlyAmount?: boolean;
+  };
 
   @IsOptional()
-  @IsNumber()
-  @Min(0)
-  gasUsed?: number;
+  @IsObject()
+  defaults?: {
+    ratePerUnit?: number;
+    fixedMonthlyAmount?: number;
+    taxRate?: number;
+    unitLabel?: string;
+  };
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
-
