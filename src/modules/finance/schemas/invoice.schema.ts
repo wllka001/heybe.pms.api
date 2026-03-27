@@ -47,19 +47,22 @@ export class Invoice {
         amount: { type: Number, required: true },
         paidAmount: { type: Number, default: 0 },
       },
-      utilities: [
-        {
-          type: String,
-          description: String,
-          consumption: Number,
-          rate: Number,
-          amount: Number,
-          tax: Number,
-          total: Number,
-          readingId: { type: Types.ObjectId, ref: 'UtilityReading' },
-          paidAmount: { type: Number, default: 0 },
-        },
-      ],
+      utilities: {
+        type: [
+          {
+            type: { type: String },
+            description: { type: String },
+            consumption: { type: Number },
+            rate: { type: Number },
+            amount: { type: Number },
+            tax: { type: Number },
+            total: { type: Number },
+            readingId: { type: Types.ObjectId, ref: 'UtilityReading' },
+            paidAmount: { type: Number, default: 0 },
+          },
+        ],
+        default: [],
+      },
       additionalCharges: [
         {
           description: String,

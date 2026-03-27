@@ -17,6 +17,7 @@ import { FinanceReportDto } from './dto/finance-report.dto';
 import { GenerateInvoicesDto } from './dto/generate-invoices.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { RecordReadingDto } from './dto/record-reading.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { FinanceService } from './finance.service';
@@ -28,6 +29,11 @@ export class FinanceController {
   @Post('invoices/generate')
   generateInvoices(@Req() req: any, @Body() dto: GenerateInvoicesDto) {
     return this.financeService.generateMonthlyInvoices(req.user.organizationId, dto);
+  }
+
+  @Post('invoices/preview')
+  previewInvoices(@Req() req: any, @Body() dto: GenerateInvoicesDto) {
+    return this.financeService.previewMonthlyInvoices(req.user.organizationId, dto);
   }
 
   @Post('invoices')
@@ -83,6 +89,15 @@ export class FinanceController {
     return this.financeService.getPayment(req.user.organizationId, id);
   }
 
+  @Patch('payments/:id')
+  updatePayment(
+    @Req() req: any,
+    @Param('id', ParseObjectIdPipe) id: string,
+    @Body() dto: UpdatePaymentDto,
+  ) {
+    return this.financeService.updatePayment(req.user.organizationId, id, dto);
+  }
+
   @Get('payments/:id/receipt')
   async paymentReceipt(@Req() req: any, @Param('id', ParseObjectIdPipe) id: string) {
     const payment = await this.financeService.getPayment(req.user.organizationId, id);
@@ -117,6 +132,20 @@ export class FinanceController {
     );
   }
 
+  @Post('payments/:id/reject')
+  rejectPayment(
+    @Req() req: any,
+    @Param('id', ParseObjectIdPipe) id: string,
+    @Body() body: { note?: string },
+  ) {
+    return this.financeService.updatePaymentLifecycle(
+      req.user.organizationId,
+      id,
+      { status: 'rejected', note: body.note },
+      req.user.id,
+    );
+  }
+
   @Post('payments/:id/reverse')
   reversePayment(
     @Req() req: any,
@@ -134,6 +163,15 @@ export class FinanceController {
   @Post('readings')
   recordReading(@Req() req: any, @Body() dto: RecordReadingDto) {
     return this.financeService.recordReading(req.user.organizationId, dto, req.user.id);
+  }
+
+  @Patch('readings/:id')
+  updateReading(
+    @Req() req: any,
+    @Param('id', ParseObjectIdPipe) id: string,
+    @Body() dto: RecordReadingDto,
+  ) {
+    return this.financeService.updateReading(req.user.organizationId, id, dto, req.user.id);
   }
 
   @Post('readings/bulk')
@@ -210,5 +248,10 @@ export class FinanceController {
   @Post('reports/summary')
   report(@Req() req: any, @Body() dto: FinanceReportDto) {
     return this.financeService.financeReport(req.user.organizationId, dto);
+  }
+
+  @Post('reports/details')
+  reportDetails(@Req() req: any, @Body() dto: FinanceReportDto) {
+    return this.financeService.financeReportDetails(req.user.organizationId, dto);
   }
 }

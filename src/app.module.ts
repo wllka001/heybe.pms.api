@@ -14,6 +14,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
 import { AuthModule } from './modules/auth/auth.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { BuildingsModule } from './modules/buildings/buildings.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './modules/health/health.module';
@@ -53,6 +54,7 @@ import { NotificationsModule } from './shared/notifications/notifications.module
     UsersModule,
     OrganizationsModule,
     BuildingsModule,
+    DashboardModule,
     UnitsModule,
     UtilityUsageModule,
     TenantsModule,

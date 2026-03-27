@@ -10,7 +10,9 @@ import { PaginationDto } from '@/common/dto/pagination.dto';
 import { addDays, endOfMonth, startOfMonth } from '@/common/utils/date-utils';
 import { generateSequenceCode } from '@/common/utils/generate-code.utils';
 import { roundCurrency } from '@/common/utils/number-utils';
+import { Building, BuildingDocument } from '@/modules/buildings/schemas/building.schema';
 import { Lease, LeaseDocument } from '@/modules/leases/schemas/lease.schema';
+import { Tenant, TenantDocument } from '@/modules/tenants/schemas/tenant.schema';
 import { UtilityUsage, UtilityUsageDocument } from '@/modules/utility-usage/schemas/utility-usage.schema';
 import { NotificationsService } from '@/shared/notifications/notifications.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
@@ -20,6 +22,7 @@ import { FinanceReportDto } from './dto/finance-report.dto';
 import { GenerateInvoicesDto } from './dto/generate-invoices.dto';
 import { ListPaymentsDto } from './dto/list-payments.dto';
 import { RecordReadingDto } from './dto/record-reading.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
 import { Expense, ExpenseDocument } from './schemas/expense.schema';
@@ -30,13 +33,15 @@ import {
   UtilityReadingDocument,
 } from './schemas/utility-reading.schema';
 import { calculateInvoiceSummary } from './utils/invoice-calculator';
-import { calculateLateFee } from './utils/late-fee-calculator';
 import { allocatePayment } from './utils/payment-allocation.util';
 
 @Injectable()
 export class FinanceService {
   constructor(
+    @InjectModel(Building.name)
+    private readonly buildingModel: Model<BuildingDocument>,
     @InjectModel(Lease.name) private readonly leaseModel: Model<LeaseDocument>,
+    @InjectModel(Tenant.name) private readonly tenantModel: Model<TenantDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<PaymentDocument>,
     @InjectModel(UtilityReading.name)
@@ -53,24 +58,13 @@ export class FinanceService {
     dto: GenerateInvoicesDto,
   ): Promise<{ created: number; skipped: number }> {
     const orgObjectId = new Types.ObjectId(organizationId);
-    const monthStart = startOfMonth(dto.year, dto.month);
-    const monthEnd = endOfMonth(dto.year, dto.month);
-
-    const activeLeases = await this.leaseModel
-      .find({
-        organizationId: orgObjectId,
-        status: 'active',
-        'period.startDate': { $lte: monthEnd },
-        'period.endDate': { $gte: monthStart },
-        deletedAt: null,
-      })
-      .lean();
+    const activeLeases = await this.getActiveLeasesForPeriod(orgObjectId, dto.year, dto.month);
 
     let created = 0;
     let skipped = 0;
 
     for (const lease of activeLeases) {
-      const exists = await this.invoiceModel.findOne({
+      const existingInvoice = await this.invoiceModel.findOne({
         organizationId: orgObjectId,
         leaseId: lease._id,
         'period.month': dto.month,
@@ -78,148 +72,56 @@ export class FinanceService {
         deletedAt: null,
       });
 
-      if (exists) {
+      if (existingInvoice && !dto.regenerate) {
         skipped += 1;
         continue;
       }
 
-      const utilityReadings = await this.utilityReadingModel.find({
-        organizationId: orgObjectId,
-        leaseId: lease._id,
-        isBilled: false,
-        'billingPeriod.month': dto.month,
-        'billingPeriod.year': dto.year,
-        deletedAt: null,
-      });
+      const draft = await this.buildInvoiceDraft(
+        orgObjectId,
+        lease,
+        dto,
+        existingInvoice ?? undefined,
+      );
+      const now = new Date();
 
-      const previousMonth = dto.month === 1 ? 12 : dto.month - 1;
-      const previousYear = dto.month === 1 ? dto.year - 1 : dto.year;
-      const previousInvoice = await this.invoiceModel.findOne({
-        organizationId: orgObjectId,
-        leaseId: lease._id,
-        status: 'overdue',
-        'period.month': previousMonth,
-        'period.year': previousYear,
-        deletedAt: null,
-      });
-
-      const lateFeeAmount = previousInvoice
-        ? calculateLateFee(
-            previousInvoice.balance,
-            lease.terms.lateFeeType,
-            lease.terms.lateFeeValue,
-          )
-        : 0;
-
-      const lateFeeTax = 0;
-      const lateFeeTotal = lateFeeAmount + lateFeeTax;
-      const garbageFee = Number(lease.utilities?.garbageFee ?? 0);
-      const securityFee = Number(lease.utilities?.securityFee ?? 0);
-
-      const fixedUtilityRows = [
-        ...(garbageFee > 0
-          ? [
-              {
-                type: 'garbage',
-                consumption: 1,
-                rate: garbageFee,
-                amount: garbageFee,
-                tax: 0,
-                total: garbageFee,
-                paidAmount: 0,
-              },
-            ]
-          : []),
-        ...(securityFee > 0
-          ? [
-              {
-                type: 'security',
-                consumption: 1,
-                rate: securityFee,
-                amount: securityFee,
-                tax: 0,
-                total: securityFee,
-                paidAmount: 0,
-              },
-            ]
-          : []),
-      ];
-
-      const items = {
-        rent: {
-          amount: lease.terms.rentAmount,
+      let invoice: InvoiceDocument;
+      if (existingInvoice) {
+        existingInvoice.items = draft.items;
+        existingInvoice.summary = draft.summary;
+        existingInvoice.period = draft.period;
+        existingInvoice.lateFee = draft.lateFee;
+        this.syncInvoiceAccounting(existingInvoice, Number(existingInvoice.paidAmount ?? 0), now);
+        invoice = await existingInvoice.save();
+      } else {
+        invoice = await this.invoiceModel.create({
+          organizationId: orgObjectId,
+          invoiceNumber: this.generateInvoiceNumber(dto.year, dto.month),
+          leaseId: lease._id,
+          tenantId: lease.tenantId,
+          unitId: lease.unitId,
+          buildingId: lease.buildingId,
+          period: draft.period,
+          items: draft.items,
+          summary: draft.summary,
+          status: 'pending',
           paidAmount: 0,
-        },
-        utilities: [
-          ...utilityReadings.map((reading: UtilityReadingDocument) => ({
-            type: reading.utilityType,
-            consumption: reading.consumption,
-            rate: reading.ratePerUnit,
-            amount: reading.amount,
-            tax: reading.taxAmount,
-            total: reading.totalAmount,
-            description: reading.utilityTypeName,
-            readingId: reading._id,
-            paidAmount: 0,
-          })),
-          ...fixedUtilityRows,
-        ],
-        additionalCharges: lateFeeAmount
-          ? [
-              {
-                description: 'Late fee - previous period',
-                amount: lateFeeAmount,
-                tax: lateFeeTax,
-                total: lateFeeTotal,
-                type: 'late_fee',
-                paidAmount: 0,
-              },
-            ]
-          : [],
-      };
+          balance: draft.summary.totalAmount,
+          lateFee: draft.lateFee,
+        });
+      }
 
-      const summary = calculateInvoiceSummary(items);
-
-      const dueDate = addDays(monthStart, Number(lease.terms.gracePeriodDays ?? 5));
-
-      const invoice = await this.invoiceModel.create({
-        organizationId: orgObjectId,
-        invoiceNumber: this.generateInvoiceNumber(dto.year, dto.month),
-        leaseId: lease._id,
-        tenantId: lease.tenantId,
-        unitId: lease.unitId,
-        buildingId: lease.buildingId,
-        period: {
-          month: dto.month,
-          year: dto.year,
-          startDate: monthStart,
-          endDate: monthEnd,
-          dueDate,
-        },
-        items,
-        summary,
-        status: 'pending',
-        paidAmount: 0,
-        balance: summary.totalAmount,
-        lateFee: {
-          applied: lateFeeAmount > 0,
-          feeAmount: lateFeeAmount,
-        },
-      });
-
-      if (utilityReadings.length > 0) {
+      if (draft.utilityReadings.length > 0) {
         await this.utilityReadingModel.updateMany(
           {
             _id: {
-              $in: utilityReadings.map(
-                (reading: UtilityReadingDocument) => reading._id,
-              ),
+              $in: draft.utilityReadings.map((reading: UtilityReadingDocument) => reading._id),
             },
           },
           {
             isBilled: true,
             invoiceId: invoice._id,
-            billingDate: new Date(),
+            billingDate: now,
           },
         );
       }
@@ -228,6 +130,63 @@ export class FinanceService {
     }
 
     return { created, skipped };
+  }
+
+  async previewMonthlyInvoices(organizationId: string, dto: GenerateInvoicesDto) {
+    const orgObjectId = new Types.ObjectId(organizationId);
+    const activeLeases = await this.getActiveLeasesForPeriod(orgObjectId, dto.year, dto.month);
+    const invoices = [];
+
+    for (const lease of activeLeases) {
+      const existingInvoice = await this.invoiceModel.findOne({
+        organizationId: orgObjectId,
+        leaseId: lease._id,
+        'period.month': dto.month,
+        'period.year': dto.year,
+        deletedAt: null,
+      });
+
+      const draft = await this.buildInvoiceDraft(
+        orgObjectId,
+        lease,
+        dto,
+        existingInvoice ?? undefined,
+      );
+
+      invoices.push({
+        leaseId: lease._id,
+        leaseNumber: lease.leaseNumber,
+        unitCode:
+          typeof lease.unitId === 'object' && lease.unitId !== null && 'unitNumber' in lease.unitId
+            ? String((lease.unitId as { unitNumber?: string }).unitNumber ?? '')
+            : null,
+        tenantName: this.getTenantName(lease.tenantId),
+        tenantPhone: this.getTenantPhone(lease.tenantId),
+        invoiceId: existingInvoice?._id ?? null,
+        invoiceNumber: existingInvoice?.invoiceNumber ?? null,
+        action: existingInvoice ? 'regenerate' : 'generate',
+        period: draft.period,
+        rentAmount: draft.items.rent.amount,
+        utilityCount: draft.items.utilities.length,
+        summary: draft.summary,
+        items: draft.items,
+      });
+    }
+
+    return {
+      month: dto.month,
+      year: dto.year,
+      regenerate: Boolean(dto.regenerate),
+      invoices,
+      summary: {
+        leaseCount: invoices.length,
+        generateCount: invoices.filter((invoice) => invoice.action === 'generate').length,
+        regenerateCount: invoices.filter((invoice) => invoice.action === 'regenerate').length,
+        totalAmount: roundCurrency(
+          invoices.reduce((sum, invoice) => sum + Number(invoice.summary?.totalAmount ?? 0), 0),
+        ),
+      },
+    };
   }
 
   async createSingleInvoice(
@@ -447,6 +406,20 @@ export class FinanceService {
         amount: row.amount,
       }));
 
+      if (dto.invoiceId && (!allocationRows || allocationRows.length === 0)) {
+        const selectedInvoice = invoiceMap.get(dto.invoiceId);
+        if (!selectedInvoice) {
+          throw new BadRequestException('Selected invoice is fully paid or unavailable.');
+        }
+
+        allocationRows = [
+          {
+            invoiceId: dto.invoiceId,
+            amount: Math.min(Number(dto.amount), Number(selectedInvoice.balance)),
+          },
+        ];
+      }
+
       if (!allocationRows || allocationRows.length === 0) {
         allocationRows = allocatePayment(
           dto.amount,
@@ -525,32 +498,11 @@ export class FinanceService {
             `Invoice ${row.invoiceId} is not open or not found for allocation.`,
           );
         }
-
-        invoice.paidAmount = roundCurrency(Number(invoice.paidAmount) + Number(row.amount));
-        invoice.balance = roundCurrency(invoice.summary.totalAmount - invoice.paidAmount);
-
-        if (invoice.balance <= 0) {
-          invoice.balance = 0;
-          invoice.status = 'paid';
-          invoice.paidAt = now;
-        } else {
-          invoice.status = 'partially_paid';
+        if (Number(row.amount) > Number(invoice.balance)) {
+          throw new BadRequestException(
+            `Allocated amount exceeds the remaining balance for invoice ${invoice.invoiceNumber}.`,
+          );
         }
-
-        invoice.paymentHistory.push({
-          paymentId: payment._id,
-          amount: row.amount,
-          date: now,
-          allocation: [
-            {
-              itemType: 'rent',
-              itemIndex: 0,
-              amount: row.amount,
-            },
-          ],
-        });
-
-        await invoice.save({ session });
       }
 
       await session.commitTransaction();
@@ -566,9 +518,10 @@ export class FinanceService {
   async listPayments(organizationId: string, query: ListPaymentsDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
+    const organizationObjectId = new Types.ObjectId(organizationId);
 
     const filter: Record<string, unknown> = {
-      organizationId: new Types.ObjectId(organizationId),
+      organizationId: organizationObjectId,
       deletedAt: null,
     };
 
@@ -576,13 +529,93 @@ export class FinanceService {
       filter.tenantId = new Types.ObjectId(query.tenantId);
     }
 
+    if (query.leaseId) {
+      filter.leaseId = new Types.ObjectId(query.leaseId);
+    }
+
     if (query.status) {
       filter['lifecycle.status'] = query.status;
+    }
+
+    if (query.year || query.month) {
+      const year = query.year ?? new Date().getFullYear();
+      const startDate = query.month
+        ? new Date(year, query.month - 1, 1)
+        : new Date(year, 0, 1);
+      const endDate = query.month
+        ? new Date(year, query.month, 1)
+        : new Date(year + 1, 0, 1);
+
+      filter.paymentDate = {
+        $gte: startDate,
+        $lt: endDate,
+      };
+    }
+
+    const search = query.search?.trim();
+    if (search) {
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'i');
+
+      const [matchingTenants, matchingInvoices, matchingLeases] = await Promise.all([
+        this.tenantModel
+          .find({
+            organizationId: organizationObjectId,
+            deletedAt: null,
+            $or: [
+              { tenantCode: regex },
+              { 'personalInfo.firstName': regex },
+              { 'personalInfo.middleName': regex },
+              { 'personalInfo.lastName': regex },
+              { 'contact.primaryPhone': regex },
+              { 'contact.secondaryPhone': regex },
+              { 'contact.email': regex },
+            ],
+          })
+          .select('_id')
+          .lean(),
+        this.invoiceModel
+          .find({
+            organizationId: organizationObjectId,
+            deletedAt: null,
+            invoiceNumber: regex,
+          })
+          .select('_id')
+          .lean(),
+        this.leaseModel
+          .find({
+            organizationId: organizationObjectId,
+            deletedAt: null,
+            leaseNumber: regex,
+          })
+          .select('_id')
+          .lean(),
+      ]);
+
+      filter.$or = [
+        { paymentNumber: regex },
+        { 'receipt.receiptNumber': regex },
+        { notes: regex },
+        { tenantId: { $in: matchingTenants.map((tenant) => tenant._id) } },
+        { invoiceId: { $in: matchingInvoices.map((invoice) => invoice._id) } },
+        { leaseId: { $in: matchingLeases.map((lease) => lease._id) } },
+      ];
     }
 
     const [data, total] = await Promise.all([
       this.paymentModel
         .find(filter)
+        .populate('invoiceId')
+        .populate('tenantId')
+        .populate('leaseId')
+        .populate('unitId')
+        .populate('buildingId')
+        .populate('recordedBy', 'firstName lastName username email')
+        .populate('lifecycle.verifiedBy', 'firstName lastName username email')
+        .populate('lifecycle.reconciledBy', 'firstName lastName username email')
+        .populate('lifecycle.rejectedBy', 'firstName lastName username email')
+        .populate('lifecycle.reversedBy', 'firstName lastName username email')
+        .populate('allocation.invoiceId', 'invoiceNumber items summary balance status')
         .sort({ paymentDate: -1, createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit),
@@ -590,7 +623,7 @@ export class FinanceService {
     ]);
 
     return {
-      data,
+      data: data.map((payment) => this.formatPaymentResponse(payment)),
       meta: {
         total,
         page,
@@ -602,7 +635,24 @@ export class FinanceService {
     };
   }
 
-  async getPayment(organizationId: string, id: string): Promise<PaymentDocument> {
+  async getPayment(organizationId: string, id: string): Promise<any> {
+    const payment = await this.getPaymentEntity(organizationId, id);
+    await payment.populate('invoiceId');
+    await payment.populate('tenantId');
+    await payment.populate('leaseId');
+    await payment.populate('unitId');
+    await payment.populate('buildingId');
+    await payment.populate('recordedBy', 'firstName lastName username email');
+    await payment.populate('lifecycle.verifiedBy', 'firstName lastName username email');
+    await payment.populate('lifecycle.reconciledBy', 'firstName lastName username email');
+    await payment.populate('lifecycle.rejectedBy', 'firstName lastName username email');
+    await payment.populate('lifecycle.reversedBy', 'firstName lastName username email');
+    await payment.populate('allocation.invoiceId', 'invoiceNumber items summary balance status');
+
+    return this.formatPaymentResponse(payment);
+  }
+
+  private async getPaymentEntity(organizationId: string, id: string): Promise<PaymentDocument> {
     const payment = await this.paymentModel.findOne({
       _id: new Types.ObjectId(id),
       organizationId: new Types.ObjectId(organizationId),
@@ -616,26 +666,89 @@ export class FinanceService {
     return payment;
   }
 
+  async updatePayment(
+    organizationId: string,
+    id: string,
+    dto: UpdatePaymentDto,
+  ): Promise<PaymentDocument> {
+    const payment = await this.getPaymentEntity(organizationId, id);
+    const status =
+      ((payment.lifecycle as Record<string, unknown>).status as string | undefined) ?? 'recorded';
+
+    if (!['recorded', 'verified'].includes(status)) {
+      throw new BadRequestException('Only recorded or verified payments can be edited.');
+    }
+
+    if (dto.method) {
+      this.validatePaymentMethodDetails(dto.method, dto.methodDetails ?? payment.methodDetails);
+      payment.method = dto.method;
+    } else if (dto.methodDetails) {
+      this.validatePaymentMethodDetails(payment.method, dto.methodDetails);
+    }
+
+    if (dto.amount !== undefined) {
+      payment.amount = roundCurrency(Number(dto.amount));
+    }
+    if (dto.paymentDate) {
+      payment.paymentDate = new Date(dto.paymentDate);
+    }
+    if (dto.methodDetails) {
+      payment.methodDetails = dto.methodDetails;
+    }
+    if (dto.notes !== undefined) {
+      payment.notes = dto.notes;
+    }
+
+    await payment.save();
+    return payment;
+  }
+
   async updatePaymentLifecycle(
     organizationId: string,
     id: string,
     dto: VerifyPaymentDto,
     userId: string,
   ): Promise<PaymentDocument> {
-    const payment = await this.getPayment(organizationId, id);
+    const payment = await this.getPaymentEntity(organizationId, id);
+    const currentStatus =
+      ((payment.lifecycle as Record<string, unknown>).status as string | undefined) ?? 'recorded';
+    const nextStatus = dto.status;
+    const now = new Date();
 
-    if (dto.status !== 'reversed') {
+    if (currentStatus === nextStatus) {
+      return payment;
+    }
+
+    const allowedTransitions: Record<string, string[]> = {
+      recorded: ['verified', 'rejected'],
+      verified: ['reconciled'],
+      reconciled: ['reversed'],
+      rejected: [],
+      reversed: [],
+    };
+
+    if (!allowedTransitions[currentStatus]?.includes(nextStatus)) {
+      throw new BadRequestException(
+        `Payment cannot move from ${currentStatus} to ${nextStatus}.`,
+      );
+    }
+
+    if (nextStatus === 'rejected' && !dto.note?.trim()) {
+      throw new BadRequestException('Reject reason is required.');
+    }
+
+    if (nextStatus === 'verified' || nextStatus === 'rejected') {
       const lifecycle = { ...(payment.lifecycle as Record<string, unknown>) };
-      lifecycle.status = dto.status;
+      lifecycle.status = nextStatus;
 
-      if (dto.status === 'verified') {
+      if (nextStatus === 'verified') {
         lifecycle.verifiedBy = new Types.ObjectId(userId);
-        lifecycle.verifiedAt = new Date();
+        lifecycle.verifiedAt = now;
       }
 
-      if (dto.status === 'reconciled') {
-        lifecycle.reconciledBy = new Types.ObjectId(userId);
-        lifecycle.reconciledAt = new Date();
+      if (nextStatus === 'rejected') {
+        lifecycle.rejectedBy = new Types.ObjectId(userId);
+        lifecycle.rejectedAt = now;
       }
 
       if (dto.note) {
@@ -646,13 +759,6 @@ export class FinanceService {
 
       payment.lifecycle = lifecycle;
       await payment.save();
-      return payment;
-    }
-
-    const currentStatus = (payment.lifecycle as Record<string, unknown>).status as
-      | string
-      | undefined;
-    if (currentStatus === 'reversed') {
       return payment;
     }
 
@@ -687,35 +793,45 @@ export class FinanceService {
           continue;
         }
 
-        invoice.paidAmount = roundCurrency(Math.max(0, invoice.paidAmount - amount));
-        invoice.balance = roundCurrency(invoice.summary.totalAmount - invoice.paidAmount);
-
-        if (invoice.paidAmount <= 0) {
-          invoice.paidAmount = 0;
-          invoice.status =
-            invoice.period.dueDate.getTime() < Date.now() ? 'overdue' : 'pending';
-          invoice.paidAt = undefined;
-        } else if (invoice.balance > 0) {
-          invoice.status = 'partially_paid';
-          invoice.paidAt = undefined;
-        } else {
-          invoice.status = 'paid';
+        if (nextStatus === 'reconciled') {
+          invoice.paidAmount = roundCurrency(Number(invoice.paidAmount) + amount);
+          invoice.paymentHistory.push({
+            paymentId: paymentInSession._id,
+            amount,
+            date: now,
+            allocation: [
+              {
+                itemType: (row.itemType as string) || 'rent',
+                itemIndex: Number(row.itemIndex ?? 0),
+                amount,
+              },
+            ],
+          });
+        } else if (nextStatus === 'reversed') {
+          invoice.paidAmount = roundCurrency(Math.max(0, Number(invoice.paidAmount) - amount));
+          invoice.paymentHistory = invoice.paymentHistory.filter((history) => {
+            const historyPaymentId = (history as Record<string, unknown>).paymentId as
+              | Types.ObjectId
+              | undefined;
+            return historyPaymentId?.toString() !== paymentInSession._id.toString();
+          });
         }
 
-        invoice.paymentHistory = invoice.paymentHistory.filter((history) => {
-          const historyPaymentId = (history as Record<string, unknown>).paymentId as
-            | Types.ObjectId
-            | undefined;
-          return historyPaymentId?.toString() !== paymentInSession._id.toString();
-        });
+        this.syncInvoiceAccounting(invoice, Number(invoice.paidAmount ?? 0), now);
 
         await invoice.save({ session });
       }
 
       const lifecycle = { ...(paymentInSession.lifecycle as Record<string, unknown>) };
-      lifecycle.status = 'reversed';
-      lifecycle.reversedBy = new Types.ObjectId(userId);
-      lifecycle.reversedAt = new Date();
+      lifecycle.status = nextStatus;
+      if (nextStatus === 'reconciled') {
+        lifecycle.reconciledBy = new Types.ObjectId(userId);
+        lifecycle.reconciledAt = now;
+      }
+      if (nextStatus === 'reversed') {
+        lifecycle.reversedBy = new Types.ObjectId(userId);
+        lifecycle.reversedAt = now;
+      }
       if (dto.note) {
         lifecycle.notes = lifecycle.notes
           ? `${String(lifecycle.notes)}\n${dto.note}`
@@ -803,7 +919,7 @@ export class FinanceService {
 
     const exists = await this.utilityReadingModel.findOne({
       organizationId: orgObjectId,
-      unitId: new Types.ObjectId(dto.unitId),
+      leaseId: new Types.ObjectId(dto.leaseId),
       utilityTypeId: utilityType._id,
       'billingPeriod.month': dto.billingMonth,
       'billingPeriod.year': dto.billingYear,
@@ -846,6 +962,48 @@ export class FinanceService {
       isBilled: false,
       status: 'approved',
     });
+  }
+
+  async updateReading(
+    organizationId: string,
+    id: string,
+    dto: RecordReadingDto,
+    userId: string,
+  ): Promise<UtilityReadingDocument> {
+    const reading = await this.utilityReadingModel.findOne({
+      _id: new Types.ObjectId(id),
+      organizationId: new Types.ObjectId(organizationId),
+      deletedAt: null,
+    });
+
+    if (!reading) {
+      throw new NotFoundException('Reading not found.');
+    }
+
+    const duplicate = await this.utilityReadingModel.findOne({
+      _id: { $ne: reading._id },
+      organizationId: new Types.ObjectId(organizationId),
+      leaseId: new Types.ObjectId(dto.leaseId),
+      utilityTypeId: new Types.ObjectId(dto.utilityTypeId),
+      'billingPeriod.month': dto.billingMonth,
+      'billingPeriod.year': dto.billingYear,
+      deletedAt: null,
+    });
+
+    if (duplicate) {
+      throw new ConflictException('Reading already recorded for this lease and period.');
+    }
+
+    reading.deletedAt = new Date();
+    await reading.save();
+
+    const recreated = await this.recordReading(organizationId, dto, userId);
+    recreated.isBilled = reading.isBilled;
+    recreated.invoiceId = reading.invoiceId;
+    recreated.billingDate = reading.billingDate;
+    recreated.status = reading.status;
+    await recreated.save();
+    return recreated;
   }
 
   async bulkRecordReadings(
@@ -1081,67 +1239,327 @@ export class FinanceService {
     organizationId: string,
     dto: FinanceReportDto,
   ): Promise<Record<string, unknown>> {
-    const matchBase: Record<string, unknown> = {
-      organizationId: new Types.ObjectId(organizationId),
+    const { organizationObjectId, fromDate, toDate, invoiceMatch, paymentMatch, expenseMatch } =
+      this.getFinanceReportFilters(organizationId, dto);
+
+    const [invoiceAgg, paymentAgg, expenseAgg, invoiceStatusBreakdown, paymentStatusBreakdown] =
+      await Promise.all([
+        this.invoiceModel.aggregate([
+          { $match: invoiceMatch },
+          {
+            $group: {
+              _id: null,
+              totalInvoiced: { $sum: '$summary.totalAmount' },
+              totalPaidOnInvoices: { $sum: '$paidAmount' },
+              outstandingBalance: { $sum: '$balance' },
+              invoiceCount: { $sum: 1 },
+            },
+          },
+        ]),
+        this.paymentModel.aggregate([
+          { $match: paymentMatch },
+          {
+            $group: {
+              _id: null,
+              totalPaymentsRecorded: { $sum: '$amount' },
+              paymentCount: { $sum: 1 },
+            },
+          },
+        ]),
+        this.expenseModel.aggregate([
+          { $match: expenseMatch },
+          {
+            $group: {
+              _id: '$category',
+              amount: { $sum: '$amount' },
+              count: { $sum: 1 },
+            },
+          },
+          { $sort: { amount: -1 } },
+        ]),
+        this.invoiceModel.aggregate([
+          { $match: invoiceMatch },
+          {
+            $group: {
+              _id: '$status',
+              count: { $sum: 1 },
+              amount: { $sum: '$summary.totalAmount' },
+            },
+          },
+          { $sort: { amount: -1 } },
+        ]),
+        this.paymentModel.aggregate([
+          { $match: paymentMatch },
+          {
+            $group: {
+              _id: '$lifecycle.status',
+              count: { $sum: 1 },
+              amount: { $sum: '$amount' },
+            },
+          },
+          { $sort: { amount: -1 } },
+        ]),
+      ]);
+
+    const invoiceSummary = invoiceAgg[0] ?? {
+      totalInvoiced: 0,
+      totalPaidOnInvoices: 0,
+      outstandingBalance: 0,
+      invoiceCount: 0,
+    };
+    const paymentSummary = paymentAgg[0] ?? {
+      totalPaymentsRecorded: 0,
+      paymentCount: 0,
+    };
+    const totalExpenses = expenseAgg.reduce(
+      (sum, item) => sum + Number(item.amount ?? 0),
+      0,
+    );
+    const buildingName = dto.buildingId
+      ? (await this.buildingModel
+          .findOne({
+            _id: new Types.ObjectId(dto.buildingId),
+            organizationId: organizationObjectId,
+            deletedAt: null,
+          })
+          .lean())?.name ?? null
+      : null;
+
+    return {
+      period: {
+        fromDate: fromDate.toISOString(),
+        toDate: toDate.toISOString(),
+      },
+      building: dto.buildingId
+        ? {
+            buildingId: dto.buildingId,
+            name: buildingName,
+          }
+        : null,
+      currency: 'USD',
+      summary: {
+        totalInvoiced: roundCurrency(invoiceSummary.totalInvoiced ?? 0),
+        totalCollected: roundCurrency(paymentSummary.totalPaymentsRecorded ?? 0),
+        outstandingBalance: roundCurrency(invoiceSummary.outstandingBalance ?? 0),
+        totalExpenses: roundCurrency(totalExpenses),
+        netCashflow: roundCurrency(
+          Number(paymentSummary.totalPaymentsRecorded ?? 0) - totalExpenses,
+        ),
+      },
+      invoicing: invoiceSummary,
+      payments: paymentSummary,
+      invoiceStatusBreakdown: invoiceStatusBreakdown.map((item) => ({
+        status: item._id || 'unknown',
+        count: item.count,
+        amount: roundCurrency(item.amount ?? 0),
+      })),
+      paymentStatusBreakdown: paymentStatusBreakdown.map((item) => ({
+        status: item._id || 'recorded',
+        count: item.count,
+        amount: roundCurrency(item.amount ?? 0),
+      })),
+      expensesByCategory: expenseAgg.map((item) => ({
+        category: item._id || 'other',
+        count: item.count,
+        amount: roundCurrency(item.amount ?? 0),
+      })),
+    };
+  }
+
+  async financeReportDetails(
+    organizationId: string,
+    dto: FinanceReportDto,
+  ): Promise<Record<string, unknown>> {
+    const { fromDate, toDate, invoiceMatch, paymentMatch, expenseMatch } =
+      this.getFinanceReportFilters(organizationId, dto);
+
+    const [invoices, payments, expenses] = await Promise.all([
+      this.invoiceModel
+        .find(invoiceMatch)
+        .populate('tenantId')
+        .populate('buildingId')
+        .populate('unitId')
+        .sort({ createdAt: -1 })
+        .lean(),
+      this.paymentModel
+        .find(paymentMatch)
+        .populate('invoiceId')
+        .populate('tenantId')
+        .populate('leaseId')
+        .populate('unitId')
+        .populate('buildingId')
+        .populate('recordedBy', 'firstName lastName username email')
+        .populate('lifecycle.verifiedBy', 'firstName lastName username email')
+        .populate('lifecycle.reconciledBy', 'firstName lastName username email')
+        .populate('lifecycle.rejectedBy', 'firstName lastName username email')
+        .populate('lifecycle.reversedBy', 'firstName lastName username email')
+        .populate('allocation.invoiceId', 'invoiceNumber items summary balance status')
+        .sort({ paymentDate: -1, createdAt: -1 }),
+      this.expenseModel
+        .find(expenseMatch)
+        .populate('buildingId')
+        .sort({ expenseDate: -1, createdAt: -1 })
+        .lean(),
+    ]);
+
+    const formattedPayments = payments.map((payment) =>
+      this.formatPaymentResponse(payment),
+    );
+
+    const invoiceRows = invoices.map((invoice: any) => ({
+      _id: String(invoice._id),
+      invoiceNumber: invoice.invoiceNumber,
+      tenant: this.formatTenantSummary(invoice.tenantId),
+      building: this.formatBuildingSummary(invoice.buildingId),
+      unit: this.formatUnitSummary(invoice.unitId),
+      period: invoice.period,
+      summary: invoice.summary,
+      paidAmount: roundCurrency(invoice.paidAmount ?? 0),
+      balance: roundCurrency(invoice.balance ?? 0),
+      status: invoice.status,
+      paymentCount: Array.isArray(invoice.paymentHistory)
+        ? invoice.paymentHistory.length
+        : 0,
+      createdAt: invoice.createdAt,
+    }));
+
+    const expenseRows = expenses.map((expense: any) => ({
+      _id: String(expense._id),
+      expenseNumber: expense.expenseNumber,
+      category: expense.category,
+      subCategory: expense.subCategory,
+      description: expense.description,
+      amount: roundCurrency(expense.amount ?? 0),
+      currency: expense.currency ?? 'USD',
+      building: this.formatBuildingSummary(expense.buildingId),
+      payee: expense.payee,
+      expenseDate: expense.expenseDate,
+      payment: expense.payment,
+      approval: expense.approval,
+      createdAt: expense.createdAt,
+    }));
+
+    return {
+      period: {
+        fromDate: fromDate.toISOString(),
+        toDate: toDate.toISOString(),
+      },
+      currency: 'USD',
+      invoices: invoiceRows,
+      payments: formattedPayments,
+      expenses: expenseRows,
+      monthlyTrend: this.buildFinanceMonthlyTrend(
+        invoiceRows,
+        formattedPayments,
+        expenseRows,
+      ),
+    };
+  }
+
+  private getFinanceReportFilters(
+    organizationId: string,
+    dto: FinanceReportDto,
+  ) {
+    const organizationObjectId = new Types.ObjectId(organizationId);
+    const fromDate = new Date(dto.fromDate);
+    const toDate = new Date(dto.toDate);
+
+    fromDate.setHours(0, 0, 0, 0);
+    toDate.setHours(23, 59, 59, 999);
+
+    const invoiceMatch: Record<string, unknown> = {
+      organizationId: organizationObjectId,
       deletedAt: null,
       createdAt: {
-        $gte: new Date(dto.fromDate),
-        $lte: new Date(dto.toDate),
+        $gte: fromDate,
+        $lte: toDate,
+      },
+    };
+    const paymentMatch: Record<string, unknown> = {
+      organizationId: organizationObjectId,
+      deletedAt: null,
+      paymentDate: {
+        $gte: fromDate,
+        $lte: toDate,
+      },
+    };
+    const expenseMatch: Record<string, unknown> = {
+      organizationId: organizationObjectId,
+      deletedAt: null,
+      expenseDate: {
+        $gte: fromDate,
+        $lte: toDate,
       },
     };
 
     if (dto.buildingId) {
-      matchBase.buildingId = new Types.ObjectId(dto.buildingId);
+      const buildingObjectId = new Types.ObjectId(dto.buildingId);
+      invoiceMatch.buildingId = buildingObjectId;
+      paymentMatch.buildingId = buildingObjectId;
+      expenseMatch.buildingId = buildingObjectId;
     }
 
-    const [invoiceAgg, paymentAgg, expenseAgg] = await Promise.all([
-      this.invoiceModel.aggregate([
-        { $match: matchBase },
-        {
-          $group: {
-            _id: null,
-            totalInvoiced: { $sum: '$summary.totalAmount' },
-            totalPaidOnInvoices: { $sum: '$paidAmount' },
-            outstandingBalance: { $sum: '$balance' },
-          },
-        },
-      ]),
-      this.paymentModel.aggregate([
-        { $match: matchBase },
-        {
-          $group: {
-            _id: null,
-            totalPaymentsRecorded: { $sum: '$amount' },
-          },
-        },
-      ]),
-      this.expenseModel.aggregate([
-        { $match: matchBase },
-        {
-          $group: {
-            _id: '$category',
-            amount: { $sum: '$amount' },
-          },
-        },
-      ]),
-    ]);
-
     return {
-      period: {
-        fromDate: dto.fromDate,
-        toDate: dto.toDate,
-      },
-      invoicing: invoiceAgg[0] ?? {
-        totalInvoiced: 0,
-        totalPaidOnInvoices: 0,
-        outstandingBalance: 0,
-      },
-      payments: paymentAgg[0] ?? {
-        totalPaymentsRecorded: 0,
-      },
-      expensesByCategory: expenseAgg,
-      currency: 'USD',
+      organizationObjectId,
+      fromDate,
+      toDate,
+      invoiceMatch,
+      paymentMatch,
+      expenseMatch,
     };
+  }
+
+  private buildFinanceMonthlyTrend(
+    invoices: any[],
+    payments: any[],
+    expenses: any[],
+  ) {
+    const trend = new Map<
+      string,
+      { month: string; invoiced: number; collected: number; expenses: number }
+    >();
+
+    const ensureEntry = (key: string) => {
+      const existing = trend.get(key);
+      if (existing) {
+        return existing;
+      }
+
+      const created = { month: key, invoiced: 0, collected: 0, expenses: 0 };
+      trend.set(key, created);
+      return created;
+    };
+
+    invoices.forEach((invoice) => {
+      const date = new Date(invoice.createdAt);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const entry = ensureEntry(key);
+      entry.invoiced += Number(invoice.summary?.totalAmount ?? 0);
+    });
+
+    payments.forEach((payment) => {
+      const date = new Date(payment.paymentDate);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const entry = ensureEntry(key);
+      entry.collected += Number(payment.amount ?? 0);
+    });
+
+    expenses.forEach((expense) => {
+      const date = new Date(expense.expenseDate);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const entry = ensureEntry(key);
+      entry.expenses += Number(expense.amount ?? 0);
+    });
+
+    return Array.from(trend.values())
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map((item) => ({
+        ...item,
+        invoiced: roundCurrency(item.invoiced),
+        collected: roundCurrency(item.collected),
+        expenses: roundCurrency(item.expenses),
+        net: roundCurrency(item.collected - item.expenses),
+      }));
   }
 
   private generateInvoiceNumber(year: number, month: number): string {
@@ -1182,5 +1600,271 @@ export class FinanceService {
     if (!bank?.transactionId) {
       throw new BadRequestException('Bank transactionId is required.');
     }
+  }
+
+  private async getActiveLeasesForPeriod(
+    organizationId: Types.ObjectId,
+    year: number,
+    month: number,
+  ) {
+    const monthStart = startOfMonth(year, month);
+    const monthEnd = endOfMonth(year, month);
+
+    return this.leaseModel
+      .find({
+        organizationId,
+        status: 'active',
+        'period.startDate': { $lte: monthEnd },
+        'period.endDate': { $gte: monthStart },
+        deletedAt: null,
+      })
+      .populate('tenantId')
+      .populate('unitId')
+      .lean();
+  }
+
+  private async buildInvoiceDraft(
+    organizationId: Types.ObjectId,
+    lease: Record<string, any>,
+    dto: GenerateInvoicesDto,
+    _existingInvoice?: InvoiceDocument,
+  ) {
+    const monthStart = startOfMonth(dto.year, dto.month);
+    const monthEnd = endOfMonth(dto.year, dto.month);
+    const utilityReadings = await this.utilityReadingModel.find({
+      organizationId,
+      leaseId: lease._id,
+      'billingPeriod.month': dto.month,
+      'billingPeriod.year': dto.year,
+      deletedAt: null,
+    });
+
+    const lateFeeAmount = 0;
+    const garbageFee = Number(lease.utilities?.garbageFee ?? 0);
+    const securityFee = Number(lease.utilities?.securityFee ?? 0);
+
+    const fixedUtilityRows = [
+      ...(garbageFee > 0
+        ? [
+            {
+              type: 'garbage',
+              consumption: 1,
+              rate: garbageFee,
+              amount: garbageFee,
+              tax: 0,
+              total: garbageFee,
+              paidAmount: 0,
+            },
+          ]
+        : []),
+      ...(securityFee > 0
+        ? [
+            {
+              type: 'security',
+              consumption: 1,
+              rate: securityFee,
+              amount: securityFee,
+              tax: 0,
+              total: securityFee,
+              paidAmount: 0,
+            },
+          ]
+        : []),
+    ];
+
+    const items = {
+      rent: {
+        amount: Number(lease.terms?.rentAmount ?? 0),
+        paidAmount: 0,
+      },
+      utilities: [
+        ...utilityReadings.map((reading: UtilityReadingDocument) => ({
+          type: reading.utilityType,
+          consumption: reading.consumption,
+          rate: reading.ratePerUnit,
+          amount: reading.amount,
+          tax: reading.taxAmount,
+          total: reading.totalAmount,
+          description: reading.utilityTypeName,
+          readingId: reading._id,
+          paidAmount: 0,
+        })),
+        ...fixedUtilityRows,
+      ],
+      additionalCharges: [
+        ...(lateFeeAmount > 0
+          ? [
+              {
+                description: 'Late fee - previous period',
+                amount: lateFeeAmount,
+                tax: 0,
+                total: lateFeeAmount,
+                type: 'late_fee',
+                paidAmount: 0,
+              },
+            ]
+          : []),
+      ],
+    };
+
+    return {
+      utilityReadings,
+      items,
+      summary: calculateInvoiceSummary(items),
+      lateFee: {
+        applied: lateFeeAmount > 0,
+        feeAmount: lateFeeAmount,
+      },
+      period: {
+        month: dto.month,
+        year: dto.year,
+        startDate: monthStart,
+        endDate: monthEnd,
+        dueDate: addDays(monthStart, Number(lease.terms?.gracePeriodDays ?? 5)),
+      },
+    };
+  }
+
+  private syncInvoiceAccounting(invoice: InvoiceDocument, paidAmount: number, now: Date) {
+    invoice.paidAmount = roundCurrency(Math.max(0, paidAmount));
+    invoice.balance = roundCurrency(Number(invoice.summary.totalAmount ?? 0) - invoice.paidAmount);
+
+    if (invoice.balance <= 0) {
+      invoice.balance = 0;
+      invoice.status = 'paid';
+      invoice.paidAt = now;
+      return;
+    }
+
+    invoice.paidAt = undefined;
+    if (invoice.paidAmount > 0) {
+      invoice.status = 'partially_paid';
+      return;
+    }
+
+    invoice.status = invoice.period.dueDate.getTime() < now.getTime() ? 'overdue' : 'pending';
+  }
+
+  private getTenantName(tenant: Record<string, any> | Types.ObjectId | undefined) {
+    if (!tenant || tenant instanceof Types.ObjectId) {
+      return null;
+    }
+
+    return `${tenant.personalInfo?.firstName || ''} ${tenant.personalInfo?.lastName || ''}`.trim();
+  }
+
+  private getTenantPhone(tenant: Record<string, any> | Types.ObjectId | undefined) {
+    if (!tenant || tenant instanceof Types.ObjectId) {
+      return null;
+    }
+
+    return tenant.contact?.primaryPhone ?? null;
+  }
+
+  private formatPaymentResponse(payment: any) {
+    const lifecycle = { ...(payment.lifecycle?.toObject?.() ?? payment.lifecycle ?? {}) };
+
+    return {
+      ...(payment.toObject?.() ?? payment),
+      recordedBy: this.formatAuditUser(payment.recordedBy),
+      lifecycle: {
+        ...lifecycle,
+        verifiedBy: this.formatAuditUser(lifecycle.verifiedBy),
+        reconciledBy: this.formatAuditUser(lifecycle.reconciledBy),
+        rejectedBy: this.formatAuditUser(lifecycle.rejectedBy),
+        reversedBy: this.formatAuditUser(lifecycle.reversedBy),
+      },
+      tenantId: this.formatTenantSummary(payment.tenantId),
+      leaseId: this.formatLeaseSummary(payment.leaseId),
+      unitId: this.formatUnitSummary(payment.unitId),
+      buildingId: this.formatBuildingSummary(payment.buildingId),
+      invoiceId: this.formatInvoiceSummary(payment.invoiceId),
+      allocation: Array.isArray(payment.allocation)
+        ? payment.allocation.map((row: any) => ({
+            ...(row.toObject?.() ?? row),
+            invoiceId: this.formatInvoiceSummary(row.invoiceId),
+          }))
+        : [],
+    };
+  }
+
+  private formatAuditUser(user: any) {
+    if (!user || user instanceof Types.ObjectId || typeof user === 'string') {
+      return user ?? null;
+    }
+
+    const firstName = user.firstName || '';
+    const lastName = user.lastName || '';
+
+    return {
+      _id: user._id,
+      username: user.username || null,
+      email: user.email || null,
+      fullName: `${firstName} ${lastName}`.trim() || user.username || user.email || null,
+    };
+  }
+
+  private formatTenantSummary(tenant: any) {
+    if (!tenant || tenant instanceof Types.ObjectId || typeof tenant === 'string') {
+      return tenant ?? null;
+    }
+
+    return {
+      _id: tenant._id,
+      tenantCode: tenant.tenantCode || null,
+      personalInfo: tenant.personalInfo || {},
+      contact: tenant.contact || {},
+    };
+  }
+
+  private formatLeaseSummary(lease: any) {
+    if (!lease || lease instanceof Types.ObjectId || typeof lease === 'string') {
+      return lease ?? null;
+    }
+
+    return {
+      _id: lease._id,
+      leaseNumber: lease.leaseNumber || null,
+      terms: lease.terms || {},
+    };
+  }
+
+  private formatUnitSummary(unit: any) {
+    if (!unit || unit instanceof Types.ObjectId || typeof unit === 'string') {
+      return unit ?? null;
+    }
+
+    return {
+      _id: unit._id,
+      unitNumber: unit.unitNumber || null,
+    };
+  }
+
+  private formatBuildingSummary(building: any) {
+    if (!building || building instanceof Types.ObjectId || typeof building === 'string') {
+      return building ?? null;
+    }
+
+    return {
+      _id: building._id,
+      name: building.name || null,
+    };
+  }
+
+  private formatInvoiceSummary(invoice: any) {
+    if (!invoice || invoice instanceof Types.ObjectId || typeof invoice === 'string') {
+      return invoice ?? null;
+    }
+
+    return {
+      _id: invoice._id,
+      invoiceNumber: invoice.invoiceNumber || null,
+      status: invoice.status || null,
+      balance: invoice.balance ?? 0,
+      items: invoice.items || {},
+      summary: invoice.summary || {},
+      period: invoice.period || {},
+      paidAmount: invoice.paidAmount ?? 0,
+    };
   }
 }

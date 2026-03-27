@@ -99,7 +99,7 @@ export const UtilityReadingSchema = SchemaFactory.createForClass(UtilityReading)
 UtilityReadingSchema.index(
   {
     organizationId: 1,
-    unitId: 1,
+    leaseId: 1,
     utilityTypeId: 1,
     'billingPeriod.year': 1,
     'billingPeriod.month': 1,

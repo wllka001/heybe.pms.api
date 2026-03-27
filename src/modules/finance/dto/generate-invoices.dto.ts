@@ -1,4 +1,5 @@
-import { IsInt, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class GenerateInvoicesDto {
   @IsInt()
@@ -8,4 +9,9 @@ export class GenerateInvoicesDto {
   @Min(1)
   @Max(12)
   month: number;
+
+  @IsOptional()
+  @Type(() => Boolean)
+  @IsBoolean()
+  regenerate?: boolean;
 }
