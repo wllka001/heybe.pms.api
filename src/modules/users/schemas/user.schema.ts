@@ -44,6 +44,10 @@ export class User {
       passwordChangedAt: Date,
       refreshTokenHash: String,
       refreshTokenExpiresAt: Date,
+      loginOtpHash: String,
+      loginOtpExpiresAt: Date,
+      loginOtpChallengeId: String,
+      loginOtpLastSentAt: Date,
     },
     default: {},
   })
@@ -53,6 +57,10 @@ export class User {
     passwordChangedAt?: Date;
     refreshTokenHash?: string;
     refreshTokenExpiresAt?: Date;
+    loginOtpHash?: string;
+    loginOtpExpiresAt?: Date;
+    loginOtpChallengeId?: string;
+    loginOtpLastSentAt?: Date;
   };
 
   @Prop({ type: Date, default: null })

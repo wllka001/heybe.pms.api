@@ -20,4 +20,9 @@ export const envValidationSchema = Joi.object({
   AWS_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
   AWS_S3_BUCKET: Joi.string().allow('').optional(),
   AWS_S3_BASE_URL: Joi.string().allow('').optional(),
+  SMTP_USER: Joi.string().email().allow('').optional(),
+  SMTP_PASS: Joi.string().allow('').optional(),
+  SMTP_HOST: Joi.string().allow('').default('smtp.gmail.com'),
+  SMTP_PORT: Joi.number().default(587),
+  OTP_EXPIRES_MINUTES: Joi.number().min(1).max(30).default(10),
 });

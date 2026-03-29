@@ -2,9 +2,12 @@ import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Public } from '@/common/decorators/public.decorator';
 import { LocalAuthGuard } from '@/common/guards/local-auth.guard';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { ResendLoginOtpDto } from './dto/resend-login-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
+import { VerifyLoginOtpDto } from './dto/verify-login-otp.dto';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
@@ -21,13 +24,34 @@ export class AuthController {
   @UseGuards(LocalAuthGuard)
   @Post('login')
   async login(@Req() req: any, @Body() _dto: LoginDto) {
-    return this.authService.login(req.user);
+    return this.authService.startLoginOtp(req.user);
+  }
+
+  @Public()
+  @Post('verify-login-otp')
+  async verifyLoginOtp(@Body() dto: VerifyLoginOtpDto) {
+    return this.authService.verifyLoginOtp(dto);
+  }
+
+  @Public()
+  @Post('resend-login-otp')
+  async resendLoginOtp(@Body() dto: ResendLoginOtpDto) {
+    return this.authService.resendLoginOtp(dto);
   }
 
   @Public()
   @Post('refresh')
   async refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshToken(dto.organizationId, dto.userId, dto.refreshToken);
+  }
+
+  @Post('change-password')
+  async changePassword(
+    @CurrentUser('id') userId: string,
+    @CurrentUser('organizationId') organizationId: string,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(userId, organizationId, dto);
   }
 
   @Get('me')
