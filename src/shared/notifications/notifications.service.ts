@@ -14,17 +14,24 @@ export class NotificationsService {
     const port = this.configService.get<number>('SMTP_PORT', 587);
 
     this.transporter =
-      user && pass
-        ? nodemailer.createTransport({
-          host,
-          port,
-          secure: Number(port) === 465,
-          auth: {
-            user,
-            pass,
-          },
-        })
-        : null;
+  user && pass
+    ? nodemailer.createTransport({
+        host,
+        port,
+        secure: false,              // force STARTTLS instead of implicit SSL
+        requireTLS: true,           // important for Gmail
+        auth: {
+          user,
+          pass,
+        },
+        connectionTimeout: 30000,
+        greetingTimeout: 30000,
+        socketTimeout: 30000,
+        tls: {
+          rejectUnauthorized: false,
+        },
+      })
+    : null;
   }
 
   async sendEmail(to: string, subject: string, template: string, data: Record<string, unknown>): Promise<void> {
