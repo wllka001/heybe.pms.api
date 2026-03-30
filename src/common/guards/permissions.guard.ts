@@ -1,6 +1,6 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { UsersService } from '@/modules/users/users.service';
+import { UsersService } from '../../modules/users/users.service';
 import { FIRST_USER_BOOTSTRAP_KEY } from '../decorators/first-user-bootstrap.decorator';
 import { PERMISSIONS_KEY } from '../decorators/permissions.decorator';
 
@@ -9,7 +9,7 @@ export class PermissionsGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly usersService: UsersService,
-  ) {}
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const requiredPermissions = this.reflector.getAllAndOverride<string[]>(

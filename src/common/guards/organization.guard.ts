@@ -5,7 +5,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { UsersService } from '@/modules/users/users.service';
+import { UsersService } from '../../modules/users/users.service';
 import { Role } from '../constants/roles.enum';
 import { BUILDING_ACCESS_KEY } from '../decorators/building-access.decorator';
 import { FIRST_USER_BOOTSTRAP_KEY } from '../decorators/first-user-bootstrap.decorator';
@@ -16,7 +16,7 @@ export class OrganizationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly usersService: UsersService,
-  ) {}
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [

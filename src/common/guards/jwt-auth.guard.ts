@@ -2,7 +2,7 @@ import { ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
 import { isObservable, lastValueFrom, Observable } from 'rxjs';
-import { UsersService } from '@/modules/users/users.service';
+import { UsersService } from '../../modules/users/users.service';
 import { FIRST_USER_BOOTSTRAP_KEY } from '../decorators/first-user-bootstrap.decorator';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
