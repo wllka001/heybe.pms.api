@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post, Req, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '@/common/decorators/current-user.decorator';
 import { Public } from '@/common/decorators/public.decorator';
 import { LocalAuthGuard } from '@/common/guards/local-auth.guard';
@@ -12,7 +12,7 @@ import { AuthService } from './auth.service';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService) { }
 
   @Public()
   @Post('register')
@@ -30,6 +30,7 @@ export class AuthController {
   @Public()
   @Post('verify-login-otp')
   async verifyLoginOtp(@Body() dto: VerifyLoginOtpDto) {
+    // new Logger('AuthController').warn(`Verifying OTP with data: ${JSON.stringify(dto)} - Type of OTP: ${typeof dto.otp}`);
     return this.authService.verifyLoginOtp(dto);
   }
 
