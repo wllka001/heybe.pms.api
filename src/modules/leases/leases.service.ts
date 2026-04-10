@@ -15,6 +15,11 @@ import { RenewLeaseDto } from './dto/renew-lease.dto';
 import { TerminateLeaseDto } from './dto/terminate-lease.dto';
 import { UpdateLeaseDto } from './dto/update-lease.dto';
 import { Lease, LeaseDocument } from './schemas/lease.schema';
+import {
+  formatSequentialCode,
+  generateYearMonthPrefix,
+  getNextSequentialNumber,
+} from '@/common/utils/generate-code.utils';
 
 @Injectable()
 export class LeasesService {
@@ -33,9 +38,15 @@ export class LeasesService {
     try {
       const orgObjectId = new Types.ObjectId(organizationId);
 
+
+      let leaseNumber = dto.leaseNumber;
+      if (!leaseNumber) {
+        leaseNumber = await this.generateNextLeaseNumber(organizationId);
+      }
+
       const existing = await this.leaseModel.findOne({
         organizationId: orgObjectId,
-        leaseNumber: dto.leaseNumber,
+        leaseNumber: leaseNumber,
         deletedAt: null,
       });
 
@@ -81,6 +92,7 @@ export class LeasesService {
         [
           {
             ...dto,
+            leaseNumber,
             organizationId: orgObjectId,
             tenantId: new Types.ObjectId(dto.tenantId),
             buildingId: new Types.ObjectId(dto.buildingId),
@@ -473,5 +485,23 @@ export class LeasesService {
     if (activeLease) {
       throw new ConflictException('Tenant already has an active lease.');
     }
+  }
+
+  private async generateNextLeaseNumber(organizationId: string): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `LS-${yearMonth}-`;
+
+    const leases = await this.leaseModel.find({
+      organizationId: new Types.ObjectId(organizationId),
+      leaseNumber: new RegExp(`^${prefix}`),
+      deletedAt: null,
+    }).select('leaseNumber').lean();
+
+    const sequence = getNextSequentialNumber(
+      leases.map((l) => l.leaseNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 }

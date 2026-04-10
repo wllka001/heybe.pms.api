@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsEnum,
   IsNumber,
   IsObject,
   IsOptional,
@@ -97,6 +98,11 @@ export class CreateBuildingDto {
   @IsOptional()
   @IsArray()
   amenities?: string[];
+
+  @IsOptional()
+  @IsString()
+  @IsEnum(['AUTO', 'MANUAL'])
+  unitCodeGenerationMode?: string;
 
   @IsBoolean()
   @Type(() => Boolean)

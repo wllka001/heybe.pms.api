@@ -13,6 +13,10 @@ export class CreateUnitDto {
   @IsMongoId()
   buildingId: string;
 
+  @IsOptional()
+  @IsString()
+  code?: string;
+
   @IsNumber()
   floor: number;
 

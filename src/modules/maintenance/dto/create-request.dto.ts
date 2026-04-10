@@ -7,8 +7,9 @@ import {
 } from 'class-validator';
 
 export class CreateRequestDto {
+  @IsOptional()
   @IsString()
-  requestNumber: string;
+  requestNumber?: string;
 
   @IsMongoId()
   buildingId: string;

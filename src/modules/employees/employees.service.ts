@@ -8,6 +8,11 @@ import { Model, Types } from 'mongoose';
 import { PaginationDto } from '@/common/dto/pagination.dto';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import {
+  formatSequentialCode,
+  generateYearMonthPrefix,
+  getNextSequentialNumber,
+} from '@/common/utils/generate-code.utils';
 import { Employee, EmployeeDocument } from './schemas/employee.schema';
 
 @Injectable()
@@ -18,27 +23,63 @@ export class EmployeesService {
   ) {}
 
   async create(organizationId: string, dto: CreateEmployeeDto): Promise<EmployeeDocument> {
-    const exists = await this.employeeModel.findOne({
-      organizationId: new Types.ObjectId(organizationId),
-      $or: [
-        { employeeCode: dto.employeeCode },
-        { 'personalInfo.idNumber': dto.personalInfo.idNumber },
-      ],
+    const orgObjectId = new Types.ObjectId(organizationId);
+    let employeeCode = dto.employeeCode;
+
+    if (!employeeCode) {
+      employeeCode = await this.generateNextEmployeeCode(organizationId);
+    } else {
+      const exists = await this.employeeModel.findOne({
+        organizationId: orgObjectId,
+        employeeCode,
+        deletedAt: null,
+      });
+
+      if (exists) {
+        throw new ConflictException('Employee code already exists.');
+      }
+    }
+
+    const idExists = await this.employeeModel.findOne({
+      organizationId: orgObjectId,
+      'personalInfo.idNumber': dto.personalInfo.idNumber,
       deletedAt: null,
     });
 
-    if (exists) {
-      throw new ConflictException('Employee already exists by code or ID number.');
+    if (idExists) {
+      throw new ConflictException('Employee already exists by ID number.');
     }
 
     return this.employeeModel.create({
       ...dto,
-      organizationId: new Types.ObjectId(organizationId),
+      employeeCode,
+      organizationId: orgObjectId,
       primaryBuildingId: dto.primaryBuildingId
         ? new Types.ObjectId(dto.primaryBuildingId)
         : undefined,
       status: 'active',
     });
+  }
+
+  private async generateNextEmployeeCode(organizationId: string): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `EMP-${yearMonth}-`;
+
+    const items = await this.employeeModel
+      .find({
+        organizationId: new Types.ObjectId(organizationId),
+        employeeCode: new RegExp(`^${prefix}`),
+        deletedAt: null,
+      })
+      .select('employeeCode')
+      .lean();
+
+    const sequence = getNextSequentialNumber(
+      items.map((i: any) => i.employeeCode),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 
   async findAll(

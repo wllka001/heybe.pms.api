@@ -1,11 +1,15 @@
 import { IsArray, IsEnum, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class CreateVendorDto {
+  @IsOptional()
   @IsString()
-  vendorCode: string;
+  vendorCode?: string;
 
   @IsString()
   name: string;
+
+  @IsString()
+  status: string;
 
   @IsEnum(['plumbing', 'electrical', 'cleaning', 'security', 'general', 'other'])
   category: string;

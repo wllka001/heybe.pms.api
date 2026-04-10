@@ -4,8 +4,8 @@ export class LoginDto {
   // @IsMongoId()
   // organizationId: string;
 
-  @IsEmail()
-  email: string;
+  @IsString()
+  identifier: string;
 
   @IsString()
   @MinLength(8)

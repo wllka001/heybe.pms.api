@@ -77,6 +77,14 @@ export class UsersService {
     });
   }
 
+  async findByIdentifier(identifier: string): Promise<UserDocument | null> {
+    const normalized = identifier.toLowerCase().trim();
+    return this.userModel.findOne({
+      $or: [{ email: normalized }, { username: normalized }],
+      deletedAt: null,
+    });
+  }
+
   async findByEmailGlobal(email: string): Promise<UserDocument | null> {
     return this.userModel.findOne({ email: email.toLowerCase(), deletedAt: null });
   }

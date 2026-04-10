@@ -127,7 +127,7 @@ export class BuildingsService {
         deletedAt: null,
       },
       dto,
-      { new: true },
+      { new: true, runValidators: true },
     );
 
     if (!building) {

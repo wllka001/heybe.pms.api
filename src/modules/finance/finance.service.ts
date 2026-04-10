@@ -8,7 +8,12 @@ import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Model, Types } from 'mongoose';
 import { PaginationDto } from '@/common/dto/pagination.dto';
 import { addDays, endOfMonth, startOfMonth } from '@/common/utils/date-utils';
-import { generateSequenceCode } from '@/common/utils/generate-code.utils';
+import {
+  formatSequentialCode,
+  generateSequenceCode,
+  generateYearMonthPrefix,
+  getNextSequentialNumber,
+} from '@/common/utils/generate-code.utils';
 import { roundCurrency } from '@/common/utils/number-utils';
 import { Building, BuildingDocument } from '@/modules/buildings/schemas/building.schema';
 import { Lease, LeaseDocument } from '@/modules/leases/schemas/lease.schema';
@@ -51,7 +56,7 @@ export class FinanceService {
     @InjectModel(Expense.name) private readonly expenseModel: Model<ExpenseDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly notificationsService: NotificationsService,
-  ) {}
+  ) { }
 
   async generateMonthlyInvoices(
     organizationId: string,
@@ -96,10 +101,10 @@ export class FinanceService {
       } else {
         invoice = await this.invoiceModel.create({
           organizationId: orgObjectId,
-          invoiceNumber: this.generateInvoiceNumber(dto.year, dto.month),
+          invoiceNumber: await this.generateInvoiceNumber(orgObjectId, dto.year, dto.month),
           leaseId: lease._id,
-          tenantId: lease.tenantId,
-          unitId: lease.unitId,
+          tenantId: lease.tenantId._id,
+          unitId: lease.unitId._id,
           buildingId: lease.buildingId,
           period: draft.period,
           items: draft.items,
@@ -259,7 +264,7 @@ export class FinanceService {
 
     return this.invoiceModel.create({
       organizationId: orgObjectId,
-      invoiceNumber: this.generateInvoiceNumber(dto.year, dto.month),
+      invoiceNumber: await this.generateInvoiceNumber(orgObjectId, dto.year, dto.month),
       leaseId: lease._id,
       tenantId: lease.tenantId,
       unitId: lease.unitId,
@@ -379,6 +384,8 @@ export class FinanceService {
     session.startTransaction();
 
     try {
+      console.log(dto)
+      console.log(orgObjectId)
       const openInvoices = await this.invoiceModel
         .find({
           organizationId: orgObjectId,
@@ -389,7 +396,7 @@ export class FinanceService {
         })
         .sort({ 'period.dueDate': 1, createdAt: 1 })
         .session(session);
-
+      console.log(openInvoices)
       if (!openInvoices.length && !dto.allocation?.length) {
         throw new BadRequestException('No open invoices for this tenant.');
       }
@@ -444,24 +451,24 @@ export class FinanceService {
 
       const allocationPayload = dto.allocation?.length
         ? dto.allocation.map((row) => ({
-            invoiceId: new Types.ObjectId(row.invoiceId),
-            itemType: row.itemType,
-            itemIndex: row.itemIndex ?? 0,
-            amount: row.amount,
-          }))
+          invoiceId: new Types.ObjectId(row.invoiceId),
+          itemType: row.itemType,
+          itemIndex: row.itemIndex ?? 0,
+          amount: row.amount,
+        }))
         : allocationRows.map((row) => ({
-            invoiceId: new Types.ObjectId(row.invoiceId),
-            itemType: 'rent',
-            itemIndex: 0,
-            amount: row.amount,
-          }));
+          invoiceId: new Types.ObjectId(row.invoiceId),
+          itemType: 'rent',
+          itemIndex: 0,
+          amount: row.amount,
+        }));
 
       const now = new Date();
       const paymentList = await this.paymentModel.create(
         [
           {
             organizationId: orgObjectId,
-            paymentNumber: this.generatePaymentNumber(),
+            paymentNumber: await this.generatePaymentNumber(orgObjectId),
             tenantId: new Types.ObjectId(dto.tenantId),
             leaseId: new Types.ObjectId(dto.leaseId),
             invoiceId: dto.invoiceId ? new Types.ObjectId(dto.invoiceId) : undefined,
@@ -474,7 +481,7 @@ export class FinanceService {
             methodDetails: dto.methodDetails,
             allocation: allocationPayload,
             receipt: {
-              receiptNumber: this.generateReceiptNumber(),
+              receiptNumber: await this.generateReceiptNumber(orgObjectId),
               generatedAt: now,
               sentToTenant: false,
             },
@@ -1095,19 +1102,26 @@ export class FinanceService {
     organizationId: string,
     dto: CreateExpenseDto,
   ): Promise<ExpenseDocument> {
-    const exists = await this.expenseModel.findOne({
-      organizationId: new Types.ObjectId(organizationId),
-      expenseNumber: dto.expenseNumber,
-      deletedAt: null,
-    });
+    const orgObjectId = new Types.ObjectId(organizationId);
+    let expenseNumber = dto.expenseNumber;
 
-    if (exists) {
-      throw new ConflictException('Expense number already exists.');
+    if (!expenseNumber) {
+      expenseNumber = await this.generateNextExpenseNumber(organizationId);
+    } else {
+      const exists = await this.expenseModel.findOne({
+        organizationId: orgObjectId,
+        expenseNumber,
+        deletedAt: null,
+      });
+
+      if (exists) {
+        throw new ConflictException('Expense number already exists.');
+      }
     }
 
     return this.expenseModel.create({
-      organizationId: new Types.ObjectId(organizationId),
-      expenseNumber: dto.expenseNumber,
+      organizationId: orgObjectId,
+      expenseNumber,
       category: dto.category,
       subCategory: dto.subCategory,
       description: dto.description,
@@ -1317,12 +1331,12 @@ export class FinanceService {
     );
     const buildingName = dto.buildingId
       ? (await this.buildingModel
-          .findOne({
-            _id: new Types.ObjectId(dto.buildingId),
-            organizationId: organizationObjectId,
-            deletedAt: null,
-          })
-          .lean())?.name ?? null
+        .findOne({
+          _id: new Types.ObjectId(dto.buildingId),
+          organizationId: organizationObjectId,
+          deletedAt: null,
+        })
+        .lean())?.name ?? null
       : null;
 
     return {
@@ -1332,9 +1346,9 @@ export class FinanceService {
       },
       building: dto.buildingId
         ? {
-            buildingId: dto.buildingId,
-            name: buildingName,
-          }
+          buildingId: dto.buildingId,
+          name: buildingName,
+        }
         : null,
       currency: 'USD',
       summary: {
@@ -1562,18 +1576,92 @@ export class FinanceService {
       }));
   }
 
-  private generateInvoiceNumber(year: number, month: number): string {
-    return `INV-${year}-${String(month).padStart(2, '0')}-${generateSequenceCode('')
-      .replace(/^-/, '')
-      .slice(-8)}`;
+  private async generateNextExpenseNumber(organizationId: string): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `EXP-${yearMonth}-`;
+
+    const items = await this.expenseModel
+      .find({
+        organizationId: new Types.ObjectId(organizationId),
+        expenseNumber: new RegExp(`^${prefix}`),
+        deletedAt: null,
+      })
+      .select('expenseNumber')
+      .lean();
+
+    const sequence = getNextSequentialNumber(
+      items.map((i: any) => i.expenseNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 
-  private generatePaymentNumber(): string {
-    return generateSequenceCode('PAY');
+  private async generateInvoiceNumber(
+    organizationId: string | Types.ObjectId,
+    year: number,
+    month: number,
+  ): Promise<string> {
+    const monthStr = String(month).padStart(2, '0');
+    const prefix = `INV-${year}-${monthStr}-`;
+
+    const items = await this.invoiceModel
+      .find({
+        organizationId: new Types.ObjectId(organizationId.toString()),
+        invoiceNumber: new RegExp(`^${prefix}`),
+        deletedAt: null,
+      })
+      .select('invoiceNumber')
+      .lean();
+
+    const sequence = getNextSequentialNumber(
+      items.map((i: any) => i.invoiceNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 
-  private generateReceiptNumber(): string {
-    return generateSequenceCode('RCT');
+  private async generatePaymentNumber(organizationId: string | Types.ObjectId): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `PMT-${yearMonth}-`;
+
+    const items = await this.paymentModel
+      .find({
+        organizationId: new Types.ObjectId(organizationId.toString()),
+        paymentNumber: new RegExp(`^${prefix}`),
+        deletedAt: null,
+      })
+      .select('paymentNumber')
+      .lean();
+
+    const sequence = getNextSequentialNumber(
+      items.map((i: any) => i.paymentNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
+  }
+
+  private async generateReceiptNumber(organizationId: string | Types.ObjectId): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `RCP-${yearMonth}-`;
+
+    const items = await this.paymentModel
+      .find({
+        organizationId: new Types.ObjectId(organizationId.toString()),
+        'receipt.receiptNumber': new RegExp(`^${prefix}`),
+        deletedAt: null,
+      })
+      .select('receipt.receiptNumber')
+      .lean();
+
+    const sequence = getNextSequentialNumber(
+      items.map((i: any) => i.receipt?.receiptNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 
   private validatePaymentMethodDetails(
@@ -1646,29 +1734,29 @@ export class FinanceService {
     const fixedUtilityRows = [
       ...(garbageFee > 0
         ? [
-            {
-              type: 'garbage',
-              consumption: 1,
-              rate: garbageFee,
-              amount: garbageFee,
-              tax: 0,
-              total: garbageFee,
-              paidAmount: 0,
-            },
-          ]
+          {
+            type: 'garbage',
+            consumption: 1,
+            rate: garbageFee,
+            amount: garbageFee,
+            tax: 0,
+            total: garbageFee,
+            paidAmount: 0,
+          },
+        ]
         : []),
       ...(securityFee > 0
         ? [
-            {
-              type: 'security',
-              consumption: 1,
-              rate: securityFee,
-              amount: securityFee,
-              tax: 0,
-              total: securityFee,
-              paidAmount: 0,
-            },
-          ]
+          {
+            type: 'security',
+            consumption: 1,
+            rate: securityFee,
+            amount: securityFee,
+            tax: 0,
+            total: securityFee,
+            paidAmount: 0,
+          },
+        ]
         : []),
     ];
 
@@ -1694,15 +1782,15 @@ export class FinanceService {
       additionalCharges: [
         ...(lateFeeAmount > 0
           ? [
-              {
-                description: 'Late fee - previous period',
-                amount: lateFeeAmount,
-                tax: 0,
-                total: lateFeeAmount,
-                type: 'late_fee',
-                paidAmount: 0,
-              },
-            ]
+            {
+              description: 'Late fee - previous period',
+              amount: lateFeeAmount,
+              tax: 0,
+              total: lateFeeAmount,
+              type: 'late_fee',
+              paidAmount: 0,
+            },
+          ]
           : []),
       ],
     };
@@ -1781,9 +1869,9 @@ export class FinanceService {
       invoiceId: this.formatInvoiceSummary(payment.invoiceId),
       allocation: Array.isArray(payment.allocation)
         ? payment.allocation.map((row: any) => ({
-            ...(row.toObject?.() ?? row),
-            invoiceId: this.formatInvoiceSummary(row.invoiceId),
-          }))
+          ...(row.toObject?.() ?? row),
+          invoiceId: this.formatInvoiceSummary(row.invoiceId),
+        }))
         : [],
     };
   }

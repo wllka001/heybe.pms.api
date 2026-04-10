@@ -25,7 +25,7 @@ export class InvoiceReportService {
     @InjectModel(Tenant.name) private readonly tenantModel: Model<TenantDocument>,
     @InjectModel(Unit.name) private readonly unitModel: Model<UnitDocument>,
     @InjectModel(Building.name) private readonly buildingModel: Model<BuildingDocument>,
-  ) {}
+  ) { }
 
   async generate(organizationId: string, query: ReportQueryDto) {
     const filter: Record<string, unknown> = {
@@ -47,10 +47,10 @@ export class InvoiceReportService {
 
     const invoices = await this.invoiceModel.find(filter).sort({ createdAt: -1 }).lean();
 
-    const leaseIds = [...new Set(invoices.map((item) => String(item.leaseId)))];
-    const tenantIds = [...new Set(invoices.map((item) => String(item.tenantId)))];
-    const unitIds = [...new Set(invoices.map((item) => String(item.unitId)))];
-    const buildingIds = [...new Set(invoices.map((item) => String(item.buildingId)))];
+    const leaseIds = [...new Set(invoices.map((item) => String(item.leaseId)))].filter((id) => Types.ObjectId.isValid(id));
+    const tenantIds = [...new Set(invoices.map((item) => String(item.tenantId)))].filter((id) => Types.ObjectId.isValid(id));
+    const unitIds = [...new Set(invoices.map((item) => String(item.unitId)))].filter((id) => Types.ObjectId.isValid(id));
+    const buildingIds = [...new Set(invoices.map((item) => String(item.buildingId)))].filter((id) => Types.ObjectId.isValid(id));
 
     const [leases, tenants, units, buildings] = await Promise.all([
       this.leaseModel.find({ _id: { $in: leaseIds.map((id) => new Types.ObjectId(id)) } }).lean(),

@@ -42,12 +42,48 @@ export class UnitsService {
 
     await this.assertBuildingCapacity(building, dto.floor, organizationObjectId);
 
-    const nextUnitIdentifiers = await this.generateNextUnitIdentifiers(organizationObjectId, building);
+    let unitCode: string;
+    let unitNumber: string;
+
+    if (building.unitCodeGenerationMode === 'MANUAL') {
+      if (!dto.code) {
+        throw new BadRequestException('Unit code is required in MANUAL mode.');
+      }
+      unitCode = dto.code.trim();
+      unitNumber = unitCode; // For manual, we'll use same value
+
+      // Check uniqueness
+      const existing = await this.unitModel.findOne({
+        organizationId: organizationObjectId,
+        buildingId: building._id,
+        $or: [{ code: unitCode }, { unitNumber: unitCode }],
+        deletedAt: null,
+      });
+
+      if (existing) {
+        throw new BadRequestException(`Unit code or number "${unitCode}" already exists.`);
+      }
+
+      // Check prefix if required (Optional check based on prompt)
+      // if (building.unitCodePrefix && !unitCode.startsWith(building.unitCodePrefix)) {
+      //   throw new BadRequestException(`Unit code must start with the prefix "${building.unitCodePrefix}".`);
+      // }
+
+      // Check length
+      // if (building.unitCodeLength && unitCode.length !== building.unitCodeLength) {
+      //    // Assuming length is fixed or a minimum? Usually zero-padded length means exact length.
+      //    // Let's stick to exact if specified.
+      // }
+    } else {
+      const nextUnitIdentifiers = await this.generateNextUnitIdentifiers(organizationObjectId, building);
+      unitCode = nextUnitIdentifiers.code;
+      unitNumber = nextUnitIdentifiers.unitNumber;
+    }
 
     return this.unitModel.create({
       ...dto,
-      code: nextUnitIdentifiers.code,
-      unitNumber: nextUnitIdentifiers.unitNumber,
+      code: unitCode,
+      unitNumber: unitNumber,
       organizationId: new Types.ObjectId(organizationId),
       buildingId: new Types.ObjectId(dto.buildingId),
       isActive: true,

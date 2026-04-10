@@ -11,8 +11,9 @@ import {
 } from 'class-validator';
 
 export class CreateLeaseDto {
+  @IsOptional()
   @IsString()
-  leaseNumber: string;
+  leaseNumber?: string;
 
   @IsMongoId()
   tenantId: string;

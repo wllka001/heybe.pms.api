@@ -14,11 +14,14 @@ export class Building {
   @Prop({ required: true, trim: true })
   code: string;
 
-  @Prop({ required: true, trim: true, default: 'UNT' })
+  @Prop({ required: false, trim: true })
   unitCodePrefix: string;
 
-  @Prop({ required: true, min: 1, default: 4 })
+  @Prop({ required: false })
   unitCodeLength: number;
+
+  @Prop({ required: true, enum: ['AUTO', 'MANUAL'], default: 'AUTO' })
+  unitCodeGenerationMode: 'AUTO' | 'MANUAL';
 
   @Prop({ required: true, trim: true, default: 'TEN' })
   tenantCodePrefix: string;

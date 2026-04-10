@@ -1,8 +1,9 @@
 import { IsMongoId, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class CreateEmployeeDto {
+  @IsOptional()
   @IsString()
-  employeeCode: string;
+  employeeCode?: string;
 
   @IsOptional()
   @IsMongoId()

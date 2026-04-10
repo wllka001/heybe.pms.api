@@ -11,8 +11,9 @@ import {
 } from 'class-validator';
 
 export class CreateExpenseDto {
+  @IsOptional()
   @IsString()
-  expenseNumber: string;
+  expenseNumber?: string;
 
   @IsEnum([
     'utilities',

@@ -19,6 +19,11 @@ import {
   MaintenanceRequestDocument,
 } from './schemas/maintenance-request.schema';
 import { Vendor, VendorDocument } from './schemas/vendor.schema';
+import {
+  formatSequentialCode,
+  generateYearMonthPrefix,
+  getNextSequentialNumber,
+} from '@/common/utils/generate-code.utils';
 
 @Injectable()
 export class MaintenanceService {
@@ -35,9 +40,14 @@ export class MaintenanceService {
     dto: CreateRequestDto,
     userId?: string,
   ): Promise<MaintenanceRequestDocument> {
+    let requestNumber = dto.requestNumber;
+    if (!requestNumber) {
+      requestNumber = await this.generateNextRequestNumber(organizationId);
+    }
+
     const exists = await this.requestModel.findOne({
       organizationId: new Types.ObjectId(organizationId),
-      requestNumber: dto.requestNumber,
+      requestNumber: requestNumber,
       deletedAt: null,
     });
 
@@ -47,6 +57,7 @@ export class MaintenanceService {
 
     const request = await this.requestModel.create({
       ...dto,
+      requestNumber,
       organizationId: new Types.ObjectId(organizationId),
       buildingId: new Types.ObjectId(dto.buildingId),
       unitId: new Types.ObjectId(dto.unitId),
@@ -306,9 +317,14 @@ export class MaintenanceService {
   }
 
   async createVendor(organizationId: string, dto: CreateVendorDto): Promise<VendorDocument> {
+    let vendorCode = dto.vendorCode;
+    if (!vendorCode) {
+      vendorCode = await this.generateNextVendorCode(organizationId);
+    }
+
     const exists = await this.vendorModel.findOne({
       organizationId: new Types.ObjectId(organizationId),
-      vendorCode: dto.vendorCode,
+      vendorCode: vendorCode,
       deletedAt: null,
     });
 
@@ -318,6 +334,7 @@ export class MaintenanceService {
 
     return this.vendorModel.create({
       ...dto,
+      vendorCode,
       organizationId: new Types.ObjectId(organizationId),
       status: 'active',
     });
@@ -363,5 +380,41 @@ export class MaintenanceService {
     }
 
     return vendor;
+  }
+
+  private async generateNextRequestNumber(organizationId: string): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `MR-${yearMonth}-`;
+
+    const requests = await this.requestModel.find({
+      organizationId: new Types.ObjectId(organizationId),
+      requestNumber: new RegExp(`^${prefix}`),
+      deletedAt: null,
+    }).select('requestNumber').lean();
+
+    const sequence = getNextSequentialNumber(
+      requests.map((r) => r.requestNumber),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
+  }
+
+  private async generateNextVendorCode(organizationId: string): Promise<string> {
+    const yearMonth = generateYearMonthPrefix();
+    const prefix = `VND-${yearMonth}-`;
+
+    const vendors = await this.vendorModel.find({
+      organizationId: new Types.ObjectId(organizationId),
+      vendorCode: new RegExp(`^${prefix}`),
+      deletedAt: null,
+    }).select('vendorCode').lean();
+
+    const sequence = getNextSequentialNumber(
+      vendors.map((v) => v.vendorCode),
+      prefix,
+    );
+
+    return formatSequentialCode(prefix, 4, sequence);
   }
 }
