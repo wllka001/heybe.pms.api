@@ -1766,17 +1766,26 @@ export class FinanceService {
         paidAmount: 0,
       },
       utilities: [
-        ...utilityReadings.map((reading: UtilityReadingDocument) => ({
-          type: reading.utilityType,
-          consumption: reading.consumption,
-          rate: reading.ratePerUnit,
-          amount: reading.amount,
-          tax: reading.taxAmount,
-          total: reading.totalAmount,
-          description: reading.utilityTypeName,
-          readingId: reading._id,
-          paidAmount: 0,
-        })),
+        ...utilityReadings.map((reading: UtilityReadingDocument) => {
+          const readings = (reading.readings ?? {}) as {
+            previous?: { value?: number };
+            current?: { value?: number };
+          };
+
+          return {
+            type: reading.utilityType,
+            consumption: reading.consumption,
+            rate: reading.ratePerUnit,
+            amount: reading.amount,
+            tax: reading.taxAmount,
+            total: reading.totalAmount,
+            description: reading.utilityTypeName,
+            previousValue: readings.previous?.value,
+            currentValue: readings.current?.value,
+            readingId: reading._id,
+            paidAmount: 0,
+          };
+        }),
         ...fixedUtilityRows,
       ],
       additionalCharges: [

@@ -57,6 +57,8 @@ export class Invoice {
             amount: { type: Number },
             tax: { type: Number },
             total: { type: Number },
+            previousValue: { type: Number },
+            currentValue: { type: Number },
             readingId: { type: Types.ObjectId, ref: 'UtilityReading' },
             paidAmount: { type: Number, default: 0 },
           },
