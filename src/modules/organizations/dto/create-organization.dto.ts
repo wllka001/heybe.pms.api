@@ -95,6 +95,7 @@ export class CreateOrganizationDto {
     gracePeriodDays?: number;
     invoiceDueDays?: number;
     rentDueDay?: number;
+    depositReceiptToggle?: boolean;
   };
 
   @IsOptional()

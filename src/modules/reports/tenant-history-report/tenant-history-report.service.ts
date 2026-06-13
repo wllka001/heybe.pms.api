@@ -79,6 +79,36 @@ export class TenantHistoryReportService {
       invoiceId: payment.invoiceId ? String(payment.invoiceId) : null,
     }));
 
+    let beginningBalancePaid = 0;
+    let depositPaid = 0;
+
+    historicalPayments.forEach((payment: any) => {
+      if (payment.lifecycle?.status === 'reconciled') {
+        if (payment.allocation && Array.isArray(payment.allocation)) {
+          payment.allocation.forEach((alloc: any) => {
+            if (alloc.itemType === 'deposit') {
+              depositPaid += Number(alloc.amount || 0);
+            } else if (alloc.itemType === 'beginning_balance') {
+              beginningBalancePaid += Number(alloc.amount || 0);
+            }
+          });
+        }
+      }
+    });
+
+    const tenantIdStr = query.tenantId ? String(query.tenantId) : '';
+    const tenant = tenantIdStr ? tenantMap.get(tenantIdStr) : null;
+    let lease = null;
+    if (query.leaseId) {
+      lease = leaseMap.get(String(query.leaseId));
+    } else if (tenantIdStr) {
+      lease = leases.find((l: any) => String(l.tenantId) === tenantIdStr);
+    }
+
+    const currentBegBalance = Number(tenant?.beginningBalance || 0);
+    const beginningBalance = roundCurrency(currentBegBalance + beginningBalancePaid);
+    const securityDeposit = Number(lease?.terms?.securityDeposit || 0);
+
     return {
       reportName: 'Tenant Invoice & Payments History',
       summary: {
@@ -93,6 +123,10 @@ export class TenantHistoryReportService {
         ),
         totalHistoricalInvoices: historicalInvoices.length,
         totalHistoricalPayments: historicalPayments.length,
+        beginningBalance: roundCurrency(beginningBalance),
+        beginningBalancePaid: roundCurrency(beginningBalancePaid),
+        securityDeposit: roundCurrency(securityDeposit),
+        depositPaid: roundCurrency(depositPaid),
       },
       details: {
         invoices: invoiceDetails,

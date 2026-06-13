@@ -1,7 +1,7 @@
 {
   "name": "apartment-management-backend",
   "version": "1.0.0",
-  "description": "Production-ready NestJS + MongoDB backend for apartment management",
+  "description": "Production-ready NestJS + MongoDB backend for Degaanly",
   "private": true,
   "license": "MIT",
   "scripts": {

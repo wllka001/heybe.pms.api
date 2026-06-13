@@ -15,7 +15,7 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
 
   const apiPrefix = configService.get<string>('app.apiPrefix', 'api/v1');
-  const appName = configService.get<string>('app.name', 'Apartment Management API');
+  const appName = configService.get<string>('app.name', 'Degaanly API');
   const appVersion = configService.get<string>('app.version', '1.0.0');
   const port = configService.get<number>('app.port', 3000);
   const corsOrigin = configService.get<string>('app.corsOrigin', '*');
@@ -32,7 +32,7 @@ async function bootstrap() {
 
   const swaggerConfig = new DocumentBuilder()
     .setTitle(appName)
-    .setDescription('Apartment Management System API')
+    .setDescription('Degaanly System API')
     .setVersion(appVersion)
     .addBearerAuth()
     .build();

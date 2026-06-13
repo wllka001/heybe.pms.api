@@ -4,7 +4,7 @@ export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
   PORT: Joi.number().default(3000),
   API_PREFIX: Joi.string().default('api/v1'),
-  APP_NAME: Joi.string().default('Apartment Management API'),
+  APP_NAME: Joi.string().default('Degaanly API'),
   APP_VERSION: Joi.string().default('1.0.0'),
   MONGODB_URI: Joi.string().required(),
   JWT_SECRET: Joi.string().min(16).required(),

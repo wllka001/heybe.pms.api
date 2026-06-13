@@ -5,6 +5,7 @@ import {
   IsEmail,
   IsEnum,
   IsMongoId,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -107,6 +108,10 @@ export class CreateTenantDto {
   @IsOptional()
   @IsMongoId()
   verifiedBy?: string;
+
+  @IsOptional()
+  @IsNumber()
+  beginningBalance?: number;
 
   @IsOptional()
   @IsString()

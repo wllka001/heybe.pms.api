@@ -69,10 +69,10 @@ export class Payment {
   @Prop({
     type: [
       {
-        invoiceId: { type: Types.ObjectId, ref: 'Invoice', required: true },
+        invoiceId: { type: Types.ObjectId, ref: 'Invoice', required: false },
         itemType: {
           type: String,
-          enum: ['rent', 'utility', 'additional', 'deposit'],
+          enum: ['rent', 'utility', 'additional', 'deposit', 'beginning_balance'],
           required: true,
         },
         itemIndex: { type: Number, default: 0 },

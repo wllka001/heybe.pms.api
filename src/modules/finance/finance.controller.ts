@@ -20,6 +20,7 @@ import { RecordReadingDto } from './dto/record-reading.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { VerifyPaymentDto } from './dto/verify-payment.dto';
+import { CreateDepositRefundDto } from './dto/create-deposit-refund.dto';
 import { FinanceService } from './finance.service';
 
 @Controller('finance')
@@ -101,6 +102,7 @@ export class FinanceController {
   @Get('payments/:id/receipt')
   async paymentReceipt(@Req() req: any, @Param('id', ParseObjectIdPipe) id: string) {
     const payment = await this.financeService.getPayment(req.user.organizationId, id);
+    await this.financeService.verifyDepositReceiptAllowed(req.user.organizationId, payment);
     return {
       paymentId: payment._id,
       receiptNumber: (payment.receipt as Record<string, unknown>).receiptNumber,
@@ -253,5 +255,22 @@ export class FinanceController {
   @Post('reports/details')
   reportDetails(@Req() req: any, @Body() dto: FinanceReportDto) {
     return this.financeService.financeReportDetails(req.user.organizationId, dto);
+  }
+
+  @Post('deposit-refunds')
+  createRefund(@Req() req: any, @Body() dto: CreateDepositRefundDto) {
+    return this.financeService.createRefund(req.user.organizationId, dto, req.user.id);
+  }
+
+  @Get('deposit-refunds')
+  listRefunds(
+    @Req() req: any,
+    @Query()
+    query: PaginationDto & {
+      tenantId?: string;
+      leaseId?: string;
+    },
+  ) {
+    return this.financeService.listRefunds(req.user.organizationId, query);
   }
 }

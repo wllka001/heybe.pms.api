@@ -1,4 +1,4 @@
-# Apartment Management Backend (NestJS + MongoDB)
+# Degaanly Backend (NestJS + MongoDB)
 
 Production-ready backend scaffold for apartment/property management in Somalia.
 

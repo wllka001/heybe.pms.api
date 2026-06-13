@@ -79,6 +79,7 @@ export class Organization {
       gracePeriodDays: { type: Number, min: 0, default: 5 },
       invoiceDueDays: { type: Number, min: 1, default: 5 },
       rentDueDay: { type: Number, min: 1, max: 31, default: 1 },
+      depositReceiptToggle: { type: Boolean, default: true },
     },
     default: {},
   })
@@ -91,6 +92,7 @@ export class Organization {
     gracePeriodDays: number;
     invoiceDueDays: number;
     rentDueDay: number;
+    depositReceiptToggle: boolean;
   };
 
   @Prop({ type: Boolean, default: true })

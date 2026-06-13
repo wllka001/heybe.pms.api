@@ -63,6 +63,7 @@ export class OrganizationsService {
         gracePeriodDays: payload.settings?.gracePeriodDays ?? 5,
         invoiceDueDays: payload.settings?.invoiceDueDays ?? 5,
         rentDueDay: payload.settings?.rentDueDay ?? 1,
+        depositReceiptToggle: payload.settings?.depositReceiptToggle ?? true,
       },
       isActive: payload.isActive ?? true,
     });
@@ -188,6 +189,11 @@ export class OrganizationsService {
             payload.settings[key] = numericValue;
           }
         }
+      }
+      if (typeof payload.settings.depositReceiptToggle === 'string') {
+        payload.settings.depositReceiptToggle = payload.settings.depositReceiptToggle.toLowerCase() === 'true';
+      } else if (payload.settings.depositReceiptToggle !== undefined) {
+        payload.settings.depositReceiptToggle = Boolean(payload.settings.depositReceiptToggle);
       }
     }
 

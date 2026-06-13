@@ -106,6 +106,9 @@ export class Tenant {
   })
   paymentSummary: Record<string, unknown>;
 
+  @Prop({ type: Number, default: 0 })
+  beginningBalance: number;
+
   @Prop({ type: Date, default: null })
   deletedAt: Date | null;
 }

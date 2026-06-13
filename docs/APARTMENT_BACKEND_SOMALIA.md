@@ -1,4 +1,4 @@
-# Apartment Management Backend (Somalia, Production-Ready)
+# Degaanly Backend (Somalia, Production-Ready)
 
 This backend is designed for Somalia operations with multi-building tenancy, strict organization isolation, and manual payment recording.
 

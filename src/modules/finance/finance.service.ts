@@ -20,6 +20,7 @@ import { Lease, LeaseDocument } from '@/modules/leases/schemas/lease.schema';
 import { Tenant, TenantDocument } from '@/modules/tenants/schemas/tenant.schema';
 import { UtilityUsage, UtilityUsageDocument } from '@/modules/utility-usage/schemas/utility-usage.schema';
 import { NotificationsService } from '@/shared/notifications/notifications.service';
+import { Organization, OrganizationDocument } from '@/modules/organizations/schemas/organization.schema';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -39,6 +40,8 @@ import {
 } from './schemas/utility-reading.schema';
 import { calculateInvoiceSummary } from './utils/invoice-calculator';
 import { allocatePayment } from './utils/payment-allocation.util';
+import { CreateDepositRefundDto } from './dto/create-deposit-refund.dto';
+import { DepositRefund, DepositRefundDocument } from './schemas/deposit-refund.schema';
 
 @Injectable()
 export class FinanceService {
@@ -54,6 +57,9 @@ export class FinanceService {
     @InjectModel(UtilityUsage.name)
     private readonly utilityTypeModel: Model<UtilityUsageDocument>,
     @InjectModel(Expense.name) private readonly expenseModel: Model<ExpenseDocument>,
+    @InjectModel(Organization.name) private readonly organizationModel: Model<OrganizationDocument>,
+    @InjectModel(DepositRefund.name)
+    private readonly depositRefundModel: Model<DepositRefundDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly notificationsService: NotificationsService,
   ) { }
@@ -288,6 +294,30 @@ export class FinanceService {
     });
   }
 
+  async getInvoicePreviousBalance(tenantId: Types.ObjectId, invoiceCreatedAt: Date, organizationId: Types.ObjectId): Promise<number> {
+    const tenant = await this.tenantModel.findOne({
+      _id: tenantId,
+      organizationId,
+      deletedAt: null,
+    });
+    if (!tenant) return 0;
+
+    const beginningBalance = tenant.beginningBalance || 0;
+
+    const unpaidInvoices = await this.invoiceModel.find({
+      organizationId,
+      tenantId,
+      createdAt: { $lt: invoiceCreatedAt },
+      status: { $in: ['pending', 'overdue', 'partially_paid'] },
+      balance: { $gt: 0 },
+      deletedAt: null,
+    });
+
+    const unpaidSum = unpaidInvoices.reduce((sum, inv) => sum + (inv.balance || 0), 0);
+
+    return beginningBalance + unpaidSum;
+  }
+
   async listInvoices(
     organizationId: string,
     query: PaginationDto & {
@@ -330,8 +360,23 @@ export class FinanceService {
       this.invoiceModel.countDocuments(filter),
     ]);
 
+    const serializedInvoices = await Promise.all(
+      data.map(async (inv) => {
+        const prevBal = await this.getInvoicePreviousBalance(
+          inv.tenantId,
+          (inv as any).createdAt,
+          inv.organizationId,
+        );
+        const obj = inv.toObject();
+        return {
+          ...obj,
+          previousBalance: prevBal,
+        };
+      })
+    );
+
     return {
-      data,
+      data: serializedInvoices,
       meta: {
         total,
         page,
@@ -343,7 +388,7 @@ export class FinanceService {
     };
   }
 
-  async getInvoice(organizationId: string, id: string): Promise<InvoiceDocument> {
+  async getInvoice(organizationId: string, id: string): Promise<any> {
     const invoice = await this.invoiceModel.findOne({
       _id: new Types.ObjectId(id),
       organizationId: new Types.ObjectId(organizationId),
@@ -354,7 +399,16 @@ export class FinanceService {
       throw new NotFoundException('Invoice not found.');
     }
 
-    return invoice;
+    const prevBal = await this.getInvoicePreviousBalance(
+      invoice.tenantId,
+      (invoice as any).createdAt,
+      invoice.organizationId,
+    );
+
+    return {
+      ...invoice.toObject(),
+      previousBalance: prevBal,
+    };
   }
 
   async sendReminder(organizationId: string, id: string): Promise<{ sent: boolean }> {
@@ -384,21 +438,25 @@ export class FinanceService {
     session.startTransaction();
 
     try {
-      console.log(dto)
-      console.log(orgObjectId)
-      const openInvoices = await this.invoiceModel
-        .find({
-          organizationId: orgObjectId,
-          tenantId: new Types.ObjectId(dto.tenantId),
-          status: { $in: ['pending', 'overdue', 'partially_paid'] },
-          balance: { $gt: 0 },
-          deletedAt: null,
-        })
-        .sort({ 'period.dueDate': 1, createdAt: 1 })
-        .session(session);
-      console.log(openInvoices)
-      if (!openInvoices.length && !dto.allocation?.length) {
-        throw new BadRequestException('No open invoices for this tenant.');
+      const hasInvoiceAllocations = dto.allocation?.some(row => row.itemType !== 'deposit');
+      const isDepositOnly = (dto.allocation?.length ?? 0) > 0 && !hasInvoiceAllocations;
+
+      let openInvoices: InvoiceDocument[] = [];
+      if (!isDepositOnly) {
+        openInvoices = await this.invoiceModel
+          .find({
+            organizationId: orgObjectId,
+            tenantId: new Types.ObjectId(dto.tenantId),
+            status: { $in: ['pending', 'overdue', 'partially_paid'] },
+            balance: { $gt: 0 },
+            deletedAt: null,
+          })
+          .sort({ 'period.dueDate': 1, createdAt: 1 })
+          .session(session);
+
+        if (!openInvoices.length && !dto.allocation?.length) {
+          throw new BadRequestException('No open invoices for this tenant.');
+        }
       }
 
       const invoiceMap = new Map<string, InvoiceDocument>(
@@ -411,34 +469,76 @@ export class FinanceService {
       let allocationRows = dto.allocation?.map((row) => ({
         invoiceId: row.invoiceId,
         amount: row.amount,
-      }));
+      })) || [];
 
-      if (dto.invoiceId && (!allocationRows || allocationRows.length === 0)) {
-        const selectedInvoice = invoiceMap.get(dto.invoiceId);
-        if (!selectedInvoice) {
-          throw new BadRequestException('Selected invoice is fully paid or unavailable.');
+      if (!isDepositOnly) {
+        if (dto.invoiceId && (!allocationRows || allocationRows.length === 0)) {
+          const selectedInvoice = invoiceMap.get(dto.invoiceId);
+          if (!selectedInvoice) {
+            throw new BadRequestException('Selected invoice is fully paid or unavailable.');
+          }
+
+          const invoiceAllocationAmount = Math.min(Number(dto.amount), Number(selectedInvoice.balance));
+          allocationRows = [
+            {
+              invoiceId: dto.invoiceId,
+              amount: invoiceAllocationAmount,
+            },
+          ];
+
+          const remaining = roundCurrency(Number(dto.amount) - invoiceAllocationAmount);
+          if (remaining > 0) {
+            const tenant = await this.tenantModel.findOne({
+              _id: new Types.ObjectId(dto.tenantId),
+              organizationId: orgObjectId,
+              deletedAt: null,
+            }).session(session);
+
+            const tenantBeginningBalance = tenant?.beginningBalance || 0;
+            if (tenantBeginningBalance > 0) {
+              const beginningBalanceAllocation = Math.min(remaining, tenantBeginningBalance);
+              allocationRows.push({
+                invoiceId: undefined,
+                amount: beginningBalanceAllocation,
+              });
+            }
+          }
         }
 
-        allocationRows = [
-          {
-            invoiceId: dto.invoiceId,
-            amount: Math.min(Number(dto.amount), Number(selectedInvoice.balance)),
-          },
-        ];
-      }
+        if (!allocationRows || allocationRows.length === 0) {
+          const allocationResult = allocatePayment(
+            dto.amount,
+            openInvoices.map((invoice: InvoiceDocument) => ({
+              id: invoice._id.toString(),
+              balance: invoice.balance,
+            })),
+          );
 
-      if (!allocationRows || allocationRows.length === 0) {
-        allocationRows = allocatePayment(
-          dto.amount,
-          openInvoices.map((invoice: InvoiceDocument) => ({
-            id: invoice._id.toString(),
-            balance: invoice.balance,
-          })),
-        ).allocations;
+          allocationRows = allocationResult.allocations;
+          const remaining = roundCurrency(allocationResult.unallocated);
+          if (remaining > 0) {
+            const tenant = await this.tenantModel.findOne({
+              _id: new Types.ObjectId(dto.tenantId),
+              organizationId: orgObjectId,
+              deletedAt: null,
+            }).session(session);
+
+            const tenantBeginningBalance = tenant?.beginningBalance || 0;
+            if (tenantBeginningBalance > 0) {
+              const beginningBalanceAllocation = Math.min(remaining, tenantBeginningBalance);
+              allocationRows.push({
+                invoiceId: undefined,
+                amount: beginningBalanceAllocation,
+              });
+            }
+          }
+        }
       }
 
       const allocatedTotal = roundCurrency(
-        allocationRows.reduce((sum, row) => sum + row.amount, 0),
+        isDepositOnly
+          ? dto.amount
+          : allocationRows.reduce((sum, row) => sum + row.amount, 0),
       );
 
       if (allocatedTotal <= 0) {
@@ -451,14 +551,14 @@ export class FinanceService {
 
       const allocationPayload = dto.allocation?.length
         ? dto.allocation.map((row) => ({
-          invoiceId: new Types.ObjectId(row.invoiceId),
+          invoiceId: row.invoiceId ? new Types.ObjectId(row.invoiceId) : undefined,
           itemType: row.itemType,
           itemIndex: row.itemIndex ?? 0,
           amount: row.amount,
         }))
         : allocationRows.map((row) => ({
-          invoiceId: new Types.ObjectId(row.invoiceId),
-          itemType: 'rent',
+          invoiceId: row.invoiceId ? new Types.ObjectId(row.invoiceId) : undefined,
+          itemType: row.invoiceId ? 'rent' : 'beginning_balance',
           itemIndex: 0,
           amount: row.amount,
         }));
@@ -498,17 +598,20 @@ export class FinanceService {
 
       const payment = paymentList[0];
 
-      for (const row of allocationRows) {
-        const invoice = invoiceMap.get(row.invoiceId);
-        if (!invoice) {
-          throw new BadRequestException(
-            `Invoice ${row.invoiceId} is not open or not found for allocation.`,
-          );
-        }
-        if (Number(row.amount) > Number(invoice.balance)) {
-          throw new BadRequestException(
-            `Allocated amount exceeds the remaining balance for invoice ${invoice.invoiceNumber}.`,
-          );
+      if (!isDepositOnly) {
+        for (const row of allocationRows) {
+          if (!row.invoiceId) continue;
+          const invoice = invoiceMap.get(row.invoiceId);
+          if (!invoice) {
+            throw new BadRequestException(
+              `Invoice ${row.invoiceId} is not open or not found for allocation.`,
+            );
+          }
+          if (Number(row.amount) > Number(invoice.balance)) {
+            throw new BadRequestException(
+              `Allocated amount exceeds the remaining balance for invoice ${invoice.invoiceNumber}.`,
+            );
+          }
         }
       }
 
@@ -784,9 +887,42 @@ export class FinanceService {
       }
 
       for (const row of paymentInSession.allocation as Array<Record<string, unknown>>) {
-        const invoiceId = row.invoiceId as Types.ObjectId;
         const amount = Number(row.amount ?? 0);
-        if (!invoiceId || amount <= 0) {
+        if (amount <= 0) {
+          continue;
+        }
+
+        if (row.itemType === 'deposit') {
+          const lease = await this.leaseModel.findOne({
+            _id: paymentInSession.leaseId,
+            organizationId: new Types.ObjectId(organizationId),
+          }).session(session);
+          if (lease) {
+            lease.terms.depositPaid = nextStatus === 'reconciled';
+            await lease.save({ session });
+          }
+          continue;
+        }
+
+        if (row.itemType === 'beginning_balance') {
+          const tenant = await this.tenantModel.findOne({
+            _id: paymentInSession.tenantId,
+            organizationId: new Types.ObjectId(organizationId),
+            deletedAt: null,
+          }).session(session);
+          if (tenant) {
+            if (nextStatus === 'reconciled') {
+              tenant.beginningBalance = roundCurrency(Math.max(0, (tenant.beginningBalance || 0) - amount));
+            } else if (nextStatus === 'reversed') {
+              tenant.beginningBalance = roundCurrency((tenant.beginningBalance || 0) + amount);
+            }
+            await tenant.save({ session });
+          }
+          continue;
+        }
+
+        const invoiceId = row.invoiceId as Types.ObjectId;
+        if (!invoiceId) {
           continue;
         }
 
@@ -1962,6 +2098,109 @@ export class FinanceService {
       summary: invoice.summary || {},
       period: invoice.period || {},
       paidAmount: invoice.paidAmount ?? 0,
+    };
+  }
+
+  async verifyDepositReceiptAllowed(organizationId: string, payment: any): Promise<void> {
+    const hasDeposit = payment.allocation?.some((row: any) => row.itemType === 'deposit');
+    if (hasDeposit) {
+      const org = await this.organizationModel.findOne({
+        _id: new Types.ObjectId(organizationId),
+        deletedAt: null,
+      });
+      if (org && org.settings?.depositReceiptToggle === false) {
+        throw new BadRequestException('Deposit receipts are disabled by organization settings.');
+      }
+    }
+  }
+
+  async createRefund(
+    organizationId: string,
+    dto: CreateDepositRefundDto,
+    userId: string,
+  ): Promise<DepositRefundDocument> {
+    const orgObjectId = new Types.ObjectId(organizationId);
+    
+    const lease = await this.leaseModel.findOne({
+      _id: new Types.ObjectId(dto.leaseId),
+      tenantId: new Types.ObjectId(dto.tenantId),
+      organizationId: orgObjectId,
+      deletedAt: null,
+    });
+
+    if (!lease) {
+      throw new NotFoundException('Lease not found for the specified tenant.');
+    }
+
+    const refund = await this.depositRefundModel.create({
+      organizationId: orgObjectId,
+      tenantId: new Types.ObjectId(dto.tenantId),
+      leaseId: new Types.ObjectId(dto.leaseId),
+      amount: dto.amount,
+      refundDate: new Date(dto.refundDate),
+      method: dto.method,
+      notes: dto.notes,
+      recordedBy: new Types.ObjectId(userId),
+    });
+
+    lease.terms.depositPaid = false;
+    await lease.save();
+
+    return refund;
+  }
+
+  async listRefunds(
+    organizationId: string,
+    query: PaginationDto & {
+      tenantId?: string;
+      leaseId?: string;
+    },
+  ) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const filter: Record<string, unknown> = {
+      organizationId: new Types.ObjectId(organizationId),
+      deletedAt: null,
+    };
+
+    if (query.tenantId) {
+      filter.tenantId = new Types.ObjectId(query.tenantId);
+    }
+
+    if (query.leaseId) {
+      filter.leaseId = new Types.ObjectId(query.leaseId);
+    }
+
+    const [data, total] = await Promise.all([
+      this.depositRefundModel
+        .find(filter)
+        .populate('tenantId', 'personalInfo contact tenantCode')
+        .populate({
+          path: 'leaseId',
+          select: 'leaseNumber unitId terms status',
+          populate: {
+            path: 'unitId',
+            select: 'unitNumber type status',
+          },
+        })
+        .populate('recordedBy', 'fullName username email')
+        .sort({ refundDate: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      this.depositRefundModel.countDocuments(filter),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNext: page * limit < total,
+        hasPrevious: page > 1,
+      },
     };
   }
 }

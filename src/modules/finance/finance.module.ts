@@ -4,6 +4,7 @@ import { Building, BuildingSchema } from '@/modules/buildings/schemas/building.s
 import { Lease, LeaseSchema } from '@/modules/leases/schemas/lease.schema';
 import { Tenant, TenantSchema } from '@/modules/tenants/schemas/tenant.schema';
 import { UtilityUsage, UtilityUsageSchema } from '@/modules/utility-usage/schemas/utility-usage.schema';
+import { Organization, OrganizationSchema } from '@/modules/organizations/schemas/organization.schema';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { Expense, ExpenseSchema } from './schemas/expense.schema';
@@ -13,6 +14,7 @@ import {
   UtilityReading,
   UtilityReadingSchema,
 } from './schemas/utility-reading.schema';
+import { DepositRefund, DepositRefundSchema } from './schemas/deposit-refund.schema';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import {
       { name: UtilityReading.name, schema: UtilityReadingSchema },
       { name: Expense.name, schema: ExpenseSchema },
       { name: UtilityUsage.name, schema: UtilityUsageSchema },
+      { name: Organization.name, schema: OrganizationSchema },
+      { name: DepositRefund.name, schema: DepositRefundSchema },
     ]),
   ],
   controllers: [FinanceController],

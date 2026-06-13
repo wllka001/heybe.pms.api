@@ -13,11 +13,12 @@ import {
 import { Type } from 'class-transformer';
 
 class AllocationDto {
+  @IsOptional()
   @IsMongoId()
-  invoiceId: string;
+  invoiceId?: string;
 
-  @IsEnum(['rent', 'utility', 'additional', 'deposit'])
-  itemType: 'rent' | 'utility' | 'additional' | 'deposit';
+  @IsEnum(['rent', 'utility', 'additional', 'deposit', 'beginning_balance'])
+  itemType: 'rent' | 'utility' | 'additional' | 'deposit' | 'beginning_balance';
 
   @IsOptional()
   @IsNumber()

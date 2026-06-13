@@ -156,7 +156,7 @@ export class LeasesService {
     const [data, total] = await Promise.all([
       this.leaseModel
         .find(filter)
-        .populate('tenantId', 'tenantCode personalInfo contact status')
+        .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
         .populate('unitId', 'unitNumber floor type status marketRent buildingId')
         .populate('buildingId', 'name code')
         .sort({ createdAt: -1 })
@@ -184,7 +184,7 @@ export class LeasesService {
       organizationId: new Types.ObjectId(organizationId),
       deletedAt: null,
     })
-      .populate('tenantId', 'tenantCode personalInfo contact status')
+      .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
       .populate('buildingId', 'name code');
 
@@ -428,7 +428,7 @@ export class LeasesService {
       status: 'active',
       deletedAt: null,
     })
-      .populate('tenantId', 'tenantCode personalInfo contact status')
+      .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
       .populate('buildingId', 'name code');
   }
@@ -446,7 +446,7 @@ export class LeasesService {
   private hydrateLease(id: string): Promise<LeaseDocument> {
     return this.leaseModel
       .findById(new Types.ObjectId(id))
-      .populate('tenantId', 'tenantCode personalInfo contact status')
+      .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
       .populate('buildingId', 'name code') as Promise<LeaseDocument>;
   }
