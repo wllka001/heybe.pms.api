@@ -17,7 +17,7 @@ async function bootstrap() {
   const apiPrefix = configService.get<string>('app.apiPrefix', 'api/v1');
   const appName = configService.get<string>('app.name', 'Degaanly API');
   const appVersion = configService.get<string>('app.version', '1.0.0');
-  const port = configService.get<number>('app.port', 3000);
+  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   const corsOrigin = configService.get<string>('app.corsOrigin', '*');
 
   app.setGlobalPrefix(apiPrefix);
@@ -40,8 +40,8 @@ async function bootstrap() {
   const swaggerDoc = SwaggerModule.createDocument(app, swaggerConfig);
   SwaggerModule.setup('docs', app, swaggerDoc);
 
-  await app.listen(port);
-  Logger.log(`API running on http://localhost:${port}/${apiPrefix}`, 'Bootstrap');
+await app.listen(port, '0.0.0.0');
+Logger.log(`API running on port ${port}/${apiPrefix}`, 'Bootstrap');
 }
 
 void bootstrap();
