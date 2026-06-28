@@ -227,7 +227,7 @@ export class TenantsService {
         deletedAt: null,
       })
       .populate('unitId', 'unitNumber floor type status marketRent')
-      .populate('buildingId', 'name code')
+      .populate('buildingId', 'name code accountNumber')
       .sort({ createdAt: -1 });
   }
 

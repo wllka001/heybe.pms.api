@@ -158,7 +158,7 @@ export class LeasesService {
         .find(filter)
         .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
         .populate('unitId', 'unitNumber floor type status marketRent buildingId')
-        .populate('buildingId', 'name code')
+        .populate('buildingId', 'name code accountNumber')
         .sort({ createdAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit),
@@ -186,7 +186,7 @@ export class LeasesService {
     })
       .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
-      .populate('buildingId', 'name code');
+      .populate('buildingId', 'name code accountNumber');
 
     if (!lease) {
       throw new NotFoundException('Lease not found.');
@@ -430,7 +430,7 @@ export class LeasesService {
     })
       .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
-      .populate('buildingId', 'name code');
+      .populate('buildingId', 'name code accountNumber');
   }
 
   async leaseInvoices(organizationId: string, leaseId: string) {
@@ -448,7 +448,7 @@ export class LeasesService {
       .findById(new Types.ObjectId(id))
       .populate('tenantId', 'tenantCode personalInfo contact status beginningBalance')
       .populate('unitId', 'unitNumber floor type status marketRent buildingId')
-      .populate('buildingId', 'name code') as Promise<LeaseDocument>;
+      .populate('buildingId', 'name code accountNumber') as Promise<LeaseDocument>;
   }
 
   private assertTenantVerified(tenant: TenantDocument): void {

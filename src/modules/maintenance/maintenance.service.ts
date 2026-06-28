@@ -111,7 +111,7 @@ export class MaintenanceService {
     const [data, total] = await Promise.all([
       this.requestModel
         .find(filter)
-        .populate('buildingId', 'name code')
+        .populate('buildingId', 'name code accountNumber')
         .populate('unitId', 'unitNumber floor type status')
         .populate('tenantId', 'tenantCode personalInfo contact status')
         .sort({ createdAt: -1 })
@@ -142,7 +142,7 @@ export class MaintenanceService {
       organizationId: new Types.ObjectId(organizationId),
       deletedAt: null,
     })
-      .populate('buildingId', 'name code')
+      .populate('buildingId', 'name code accountNumber')
       .populate('unitId', 'unitNumber floor type status')
       .populate('tenantId', 'tenantCode personalInfo contact status');
 

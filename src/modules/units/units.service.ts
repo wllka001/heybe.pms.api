@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -18,7 +19,7 @@ import { UpdateUnitDto } from './dto/update-unit.dto';
 import { Unit, UnitDocument } from './schemas/unit.schema';
 
 @Injectable()
-export class UnitsService {
+export class UnitsService implements OnModuleInit {
   constructor(
     @InjectModel(Unit.name)
     private readonly unitModel: Model<UnitDocument>,
@@ -27,6 +28,15 @@ export class UnitsService {
     @InjectModel(Lease.name)
     private readonly leaseModel: Model<LeaseDocument>,
   ) { }
+
+  async onModuleInit() {
+    try {
+      await this.unitModel.collection.dropIndex('organizationId_1_buildingId_1_code_1');
+    } catch (e) {}
+    try {
+      await this.unitModel.collection.dropIndex('organizationId_1_buildingId_1_unitNumber_1');
+    } catch (e) {}
+  }
 
   async create(organizationId: string, dto: CreateUnitDto): Promise<UnitDocument> {
     const organizationObjectId = new Types.ObjectId(organizationId);
@@ -303,7 +313,7 @@ export class UnitsService {
         deletedAt: null,
       })
       .populate('tenantId', 'tenantCode personalInfo contact status')
-      .populate('buildingId', 'name code')
+      .populate('buildingId', 'name code accountNumber')
       .sort({ createdAt: -1 });
   }
 

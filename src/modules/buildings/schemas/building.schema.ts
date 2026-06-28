@@ -74,6 +74,9 @@ export class Building {
   @Prop({ type: Boolean, default: true })
   isActive: boolean;
 
+  @Prop({ required: false, trim: true })
+  accountNumber?: string;
+
   @Prop({ type: Date, default: null })
   deletedAt: Date | null;
 }

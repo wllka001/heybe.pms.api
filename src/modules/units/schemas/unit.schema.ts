@@ -70,5 +70,11 @@ export class Unit {
 }
 
 export const UnitSchema = SchemaFactory.createForClass(Unit);
-UnitSchema.index({ organizationId: 1, buildingId: 1, code: 1 }, { unique: true });
-UnitSchema.index({ organizationId: 1, buildingId: 1, unitNumber: 1 }, { unique: true });
+UnitSchema.index(
+  { organizationId: 1, buildingId: 1, code: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } }
+);
+UnitSchema.index(
+  { organizationId: 1, buildingId: 1, unitNumber: 1 },
+  { unique: true, partialFilterExpression: { deletedAt: null } }
+);

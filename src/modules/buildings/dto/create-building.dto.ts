@@ -104,6 +104,10 @@ export class CreateBuildingDto {
   @IsEnum(['AUTO', 'MANUAL'])
   unitCodeGenerationMode?: string;
 
+  @IsOptional()
+  @IsString()
+  accountNumber?: string;
+
   @IsBoolean()
   @Type(() => Boolean)
   isActive: boolean;
